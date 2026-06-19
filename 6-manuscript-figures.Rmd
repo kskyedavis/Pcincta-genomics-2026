@@ -1,0 +1,280 @@
+---
+title: "Manuscript-figures"
+author: "Skye Davis"
+date: "2026-06-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up
+
+```{r Packages}
+
+library(ggplot2) # v3.5.1
+library(dplyr) # v1.1.4
+library(tidyr) # v1.3.1
+library(scales) #v1.3.0 
+library(ggpubr) # v0.6.0
+
+```
+
+```{r Directories}
+
+main_dir <- paste0(getwd(),"/figures")
+dir.create(paste0(main_dir,"/Fig1b-DAPC"), recursive = TRUE)
+dir.create(paste0(main_dir,"/Fig1c-SAA"), recursive = TRUE)
+dir.create(paste0(main_dir,"/Fig1d-STRUCTURE"), recursive = TRUE)
+dir.create(paste0(main_dir,"/Fig3-stairway-dadi"), recursive = TRUE)
+
+```
+
+# Figure 1
+DAPC + SAA + STRUCTURE plots - later merged with a study area map in QGIS
+
+```{r Fig 1B DAPC}
+
+input_dir <- paste0(getwd(),"/results/3-kinship-structure/3.3-DAPC")
+output_dir <- paste0(getwd(),"/figures/Fig1b-DAPC")
+
+setwd(input_dir)
+ind_coords <- read.csv("DAPC-unrel-apriori-LD-Axes.csv", header = TRUE)
+
+# Order of pop names
+mypoporder <- c("North","Central","South")
+
+# Convert 'pop' to factor with custom order
+ind_coords$Group <- factor(ind_coords$Group, levels = mypoporder)
+
+# Plot scatterplot of LD1 and LD2
+A <- ggplot(data=ind_coords, aes(x=LD1, y=LD2, color=Group)) +
+  geom_point(alpha = 0.35)+
+  stat_ellipse(geom = "path", aes(group = Group)) +
+  scale_color_manual(values=c("#ff5f00","#dd217d","#725def"),labels=c("North","Central","South"))+
+  labs(x = "LD1", y = "LD2", color = "Group", title = "DAPC")
+A
+
+# Save plot for publication
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.spacing.y = unit(0.01, "cm"),legend.key = element_rect(fill = "transparent")) 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=8), legend.title = element_text(size=8,face="bold"))
+no_legend <- theme(legend.position="none")
+
+A2 <- A + plot_margin + plot_theme + text_size + no_legend
+
+## TIFF and sized for Science Journal
+
+setwd(output_dir)
+tiff("Fig1b-DAPC-all-samples-unrel.tif",width = 5, height = 5, unit='cm', res=1200)
+ggarrange(A2,
+          labels = c("B"),
+          ncol = 1, nrow = 1)
+dev.off()
+
+```
+
+```{r Fig 1C SAA}
+
+input_dir <- paste0(getwd(),"/results/3-kinship-structure/3.7-SAA")
+output_dir <- paste0(getwd(),"/figures/Fig1c-SAA")
+
+# All samples plot
+setwd(input_dir)
+spauto2 <- read.csv(file = "spauto_results-all-samples-unrelated.csv", header = TRUE)
+
+# create scatterplot with error bars (error bars are the 95% confidence intervals around each value of 'r' calculated, based on bootstrapping)
+A <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey") +
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null),
+              alpha = 0.3, fill = "grey30") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "grey30") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "grey30") +
+  scale_x_continuous(breaks = spauto2$Bin_km) +
+  #scale_y_continuous(labels = label_scientific(digits = 0)) +
+  labs(x = "Distance class (km)",
+       y = "r (corrected)",
+       title = "SAA")
+A
+
+# Save plot for publication
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.position = "none") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 6, angle = 45, hjust = 1), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6))
+
+A2 <- A + plot_margin + plot_theme + text_size
+
+## TIFF and sized for Science Journal
+setwd(output_dir)
+tiff("Fig1c-SAA-all-samples-unrel.tif",width = 8, height = 5, unit='cm', res=1200)
+ggarrange(A2,
+          labels = c("C"),
+          ncol = 1, nrow = 1)
+dev.off()
+
+
+```
+
+```{r Fig 1D STRUCTURE K = 2}
+
+input_dir <- paste0(getwd(),"/results/3-kinship-structure/3.5-STRUCTURE")
+output_dir <- paste0(getwd(),"/figures/Fig1d-STRUCTURE")
+
+# Read in results for K = 2
+setwd(paste0(input_dir,"/STRUHARV_results/CLUMPP_K2"))
+clump_result2 <- read.csv(file = "K2-output-sample-names.csv", header = TRUE)
+clump_result2
+
+# Convert proportions to numeric
+clump_result3 <- clump_result2 %>%
+  mutate(cluster_1 = as.numeric(cluster_1),
+         cluster_2 = as.numeric(cluster_2))
+
+# Create a factor with the original order of samples
+clump_result3$sample <- factor(clump_result3$sample, levels = clump_result3$sample)
+
+# Order the dataframe by Prop1
+clump_result3 <- clump_result3 %>% arrange(desc(cluster_1))
+
+# Melt the dataframe
+clump_result4 <- clump_result3 %>%
+  gather(key = "Cluster_props", value = "Value", -sample)
+clump_result4
+
+# Plot the stacked bar chart
+E <- ggplot(clump_result4, aes(x = sample, y = Value, fill = Cluster_props)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Individual", y = "Admixture coefficient", fill = "Cluster", title = "STRUCTURE") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#26547c","#ffd166"), labels = c("1", "2"))
+
+# Save barplot with legend
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill="white",color=NA), panel.border = element_rect(fill=NA),legend.position = "right") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 4.5, angle = 90, hjust = 0.5), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6), legend.title = element_text(size=8,face="bold"))
+
+E2 <- E + plot_margin + plot_theme + text_size
+E2
+
+setwd(output_dir)
+tiff("Fig1d-STRUCTURE-all-samples-unrel.tif",width = 13, height = 5, unit='cm', res=1200)
+ggarrange(E2,
+          labels = c("D"),
+          ncol = 1, nrow = 1)
+dev.off()
+
+```
+
+# Figure 2
+Figure 2 was made in QGIS
+
+# Figure 3
+
+```{r Fig 3 Stairway plot & dadi}
+
+input_dir <- paste0(getwd(),"/results/4-demography/4.2-stairway-plot")
+output_dir <- paste0(getwd(),"/figures/Fig3-stairway-dadi")
+
+# Stairway plot
+
+# Set the name of the Stairway results (folder and file name)
+result <- "ALL_n60_final"
+name <- "uG1"
+
+# Import raw Stairway data
+setwd(paste0(input_dir,"/",result))
+data <- read.table(paste0(result,".final.summary"),header = TRUE)
+
+# Full Stairway plot
+A <- ggplot(data, aes(x = year, y = Ne_median)) +
+  geom_line() +
+  #scale_x_continuous(limits = c(0,1000000))+
+  #scale_y_continuous(limits = c(0,480000))+
+  labs(y = "Ne")+
+  # 95% C.I.
+  geom_ribbon(aes(ymin = Ne_2.5., ymax = Ne_97.5.), alpha = 0.1, fill = "grey40") +
+  geom_line(aes(y = Ne_2.5.), linetype = "dashed", color = "grey40") +
+  geom_line(aes(y = Ne_97.5.), linetype = "dashed", color = "grey40")+
+  # 75% C.I.
+  geom_ribbon(aes(ymin = Ne_12.5., ymax = Ne_87.5.), alpha = 0.1, fill = "grey30") +
+  geom_line(aes(y = Ne_12.5.), linetype = "dashed", color = "grey30") +
+  geom_line(aes(y = Ne_87.5.), linetype = "dashed", color = "grey30") +
+  scale_x_continuous(
+    name = "Thousand years before present",
+    labels = function(x) x / 1000)
+A
+
+# Close up of last 1,000 years
+B <- ggplot(data, aes(x = year, y = Ne_median)) +
+  geom_line() +
+  scale_x_continuous(limits = c(0,1000))+
+  scale_y_continuous(limits = c(0,220000))+
+  labs(x = "Years before present",y = "Ne")+
+  # 95% C.I.
+  geom_ribbon(aes(ymin = Ne_2.5., ymax = Ne_97.5.), alpha = 0.1, fill = "grey40") +
+  geom_line(aes(y = Ne_2.5.), linetype = "dashed", color = "grey40") +
+  geom_line(aes(y = Ne_97.5.), linetype = "dashed", color = "grey40")+
+  # 75% C.I.
+  geom_ribbon(aes(ymin = Ne_12.5., ymax = Ne_87.5.), alpha = 0.1, fill = "grey30") +
+  geom_line(aes(y = Ne_12.5.), linetype = "dashed", color = "grey30") +
+  geom_line(aes(y = Ne_87.5.), linetype = "dashed", color = "grey30")
+B
+
+
+# Dadi results
+
+# For the best-fit dadi model, with parameters converted to Ne and time in years, plot those on the Stairway plot
+
+# Coordinates for dadi
+dadi_data <- data.frame(
+  x = c(0,59, 59,321081+59, max(data$year)),
+  y = c(918,918,167700,80354,80354)
+)
+
+# Coordinates for dadi without the last line (back to furthest stairway year)
+dadi_data <- data.frame(
+  x = c(0,59, 59,321081+59),
+  y = c(918,918,167700,80354)
+)
+
+# Add step plot to your existing plot
+A2 <- A + 
+  geom_step(data = dadi_data, aes(x = x, y = y), color = "orange2", size = 1)
+
+A2
+
+# Close up plot 1000 years
+
+dadi_data <- data.frame(
+  x = c(0, 59, 59,1000),
+  y = c(918,918,167700,167700)
+)
+
+B2 <- B + 
+  geom_step(data = dadi_data, aes(x = x, y = y), color = "orange2", size = 1)
+
+B2
+
+# Save plot for publication
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.position = "none") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8, angle = 45, hjust = 1), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6))
+
+A2 <- A2 + plot_margin + plot_theme + text_size
+B2 <- B2 + plot_margin + plot_theme + text_size
+
+setwd(output_dir)
+tiff("Fig3-stairway-dadi.tif",width = 17.5, height = 8, unit='cm', res=300)
+ggarrange(A2,B2,
+          labels = c("A","B"),
+          ncol = 2, nrow = 1)
+dev.off()
+
+```

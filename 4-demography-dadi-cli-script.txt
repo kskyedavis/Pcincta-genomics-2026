@@ -1,0 +1,131 @@
+######################### DADI-CLI SCRIPT ###########################
+
+### SET UP ###
+
+# Conda environment with dadi-cli installed
+conda activate dadi
+
+# Working directory
+
+INDIR="$(pwd)/data/sfs-data/dadi-cli"
+OUTDIR="$(pwd)/results/4-demography/4.3-dadi-cli"
+
+mkdir -p $OUTDIR
+cd $OUTDIR
+
+
+# STEP 1 - INPUT SFS
+
+dadi-cli Plot --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --output ./ALL_pop_n60_1d_sfs_folded_unmaskSingle_plot.pdf
+
+# STEP 2 - MODEL PARAMETER OPTIMIZATIONS
+
+# Setting upper and lower bounds
+# we set the range of relative population sizes to be explored as 1e-3 to 100, the range of divergence time to 0 to 1, the range of migration rates from 0 to 10, and the range of misidentification proportions to 0 to 0.5
+
+### snm_1d Model ###
+
+dadi-cli Model --names snm_1d
+
+# Standard neutral model
+# params = []
+
+# There are no parameters to optimize for this model
+dadi-cli InferDM --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --output-prefix ALL_pop_n60 --optimizations 1000 --check-convergence 500  --nomisid --model snm_1d --output ./ALL_pop_n60_1d_snm_optimize.params
+
+
+### bottlegrowth_1d Model ###
+
+dadi-cli Model --names bottlegrowth_1d
+
+# Instaneous size change followed by exponential growth.
+# params = (nuB, nuF, T)
+
+# Run optimizations for model
+dadi-cli InferDM --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --output-prefix ALL_pop_n60 --optimizations 1000 --check-convergence 500 --global-optimization --nomisid --model bottlegrowth_1d --lbounds 1e-3 1e-3 0 --ubounds 100 100 1 --output ./ALL_pop_n60_1d_bottlegrowth_optimize.params
+
+
+
+### growth Model ### 
+
+dadi-cli Model --names growth
+
+# Exponential growth beginning some time ago.
+# params = (nu, T)
+
+# Run optimizations for model
+dadi-cli InferDM --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --output-prefix ALL_pop_n60 --optimizations 1000 --check-convergence 3000 --global-optimization --nomisid --model growth --lbounds 1e-3 0 --ubounds 100 1 --output ./ALL_pop_n60_1d_growth_optimize.params
+
+
+
+### three_epoch Model ###
+
+dadi-cli Model --names three_epoch
+
+# TBD
+# params = (nuB, nuF, TB, TF)
+
+# Run optimizations for model
+dadi-cli InferDM --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --output-prefix ALL_pop_n60 --optimizations 1000 --check-convergence 500 --global-optimization --nomisid --model three_epoch --lbounds 1e-3 1e-3 0 0 --ubounds 100 100 1 1 --output ./ALL_pop_n60_1d_three_epoch_optimize.params
+
+
+### two_epoch Model ###
+
+# Had difficulty converging, ran multiple longer optimizations
+
+dadi-cli Model --names two_epoch
+
+# Instantaneous size change some time ago.
+# params = (nu, T)
+
+# Run optimizations for model
+dadi-cli InferDM --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --output-prefix ALL_pop_n60 --optimizations 1000 --check-convergence 500 --global-optimization --nomisid --model two_epoch --lbounds 1e-3 0 --ubounds 100 1 --output ./ALL_pop_n60_1d_two_epoch_optimize.params
+
+# Additional runs performed until convergence = 19
+
+
+
+
+
+
+# STEP 3 - MODEL VS DATA
+
+# Compare sfs between model and data using output from InferDM
+
+### snm_1d Model ###
+
+dadi-cli Plot --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --demo-popt ./ALL_pop_n60_1d_snm_optimize.params.InferDM.bestfits --nomisid --output ./ALL_pop_n60_1d_snm_plot.pdf --model snm_1d 
+
+
+### bottlegrowth_1d Model ###
+
+dadi-cli Plot --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --demo-popt ./ALL_pop_n60_1d_bottlegrowth_optimize.params.InferDM.bestfits --nomisid --output ./ALL_pop_n60_1d_bottlegrowth_plot.pdf --model bottlegrowth_1d
+
+
+### growth Model ###
+
+dadi-cli Plot --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --demo-popt ./ALL_pop_n60_1d_growth_optimize.params.InferDM.bestfits --nomisid --output ./ALL_pop_n60_1d_growth_plot.pdf --model growth
+
+
+### three_epoch Model ###
+
+dadi-cli Plot --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --demo-popt ./ALL_pop_n60_1d_three_epoch_optimize.params.InferDM.bestfits --nomisid --output ./ALL_pop_n60_1d_three_epoch_plot.pdf --model three_epoch
+
+
+### two_epoch Model ###
+
+dadi-cli Plot --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --demo-popt ./ALL_pop_n60_1d_two_epoch_optimize.params.InferDM.bestfits --nomisid --output ./ALL_pop_n60_1d_two_epoch_plot.pdf --model two_epoch
+
+
+
+# STEP 4 - PERFORM BOOTSTRAPPING TO GET 95% C.I.'s
+
+# For grid sizes, set lowest grid roughly twice smallest sample size
+
+dadi-cli StatDM --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --model two_epoch --grids 120 140 160 --nomisid --demo-popt ./ALL_pop_n60_1d_two_epoch_optimize.params.InferDM.bestfits  --bootstrapping-dir $INDIR/ALL_pop_n60_1d_bootstrap_sfs/ --output ./ALL_pop_n60_1d_two_epoch.bestfit.params.godambe.ci
+
+dadi-cli StatDM --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --model three_epoch --grids 120 160 200 --nomisid --demo-popt ./ALL_pop_n60_1d_three_epoch_optimize.params.InferDM.bestfits  --bootstrapping-dir $INDIR/ALL_pop_n60_1d_bootstrap_sfs/ --output ./ALL_pop_n60_1d_three_epoch.bestfit.params.godambe.ci
+
+dadi-cli StatDM --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --model bottlegrowth_1d --grids 120 160 200 --nomisid --demo-popt ./ALL_pop_n60_1d_bottlegrowth_optimize.params.InferDM.bestfits  --bootstrapping-dir $INDIR/ALL_pop_n60_1d_bootstrap_sfs/ --output ./ALL_pop_n60_1d_bottlegrowth.bestfit.params.godambe.ci
+
+dadi-cli StatDM --fs $INDIR/ALL_pop_n60_1d_sfs_folded_unmaskSingle.fs --model growth --grids 200 240 280 --nomisid --demo-popt ./ALL_pop_n60_1d_growth_optimize.params.InferDM.bestfits  --bootstrapping-dir $INDIR/ALL_pop_n60_1d_bootstrap_sfs/ --output ./ALL_pop_n60_1d_growth.bestfit.params.godambe.ci

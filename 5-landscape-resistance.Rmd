@@ -1,0 +1,1211 @@
+---
+title: "5-landscape-resistance"
+author: "Skye Davis"
+date: "2026-06-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up
+
+```{r Packages}
+
+# Data manipulation
+#library(dartR) # v2.9.7
+library(dplyr) # v1.1.4
+
+# EEMS
+library(dartRverse) # dartRverse_install(package = "dartR.spatial", rep = "github", branch = "dev") # needed to install the latest version with gl.run.eems
+library(dartR.spatial)
+library(sf) # v1.0-16
+library(raster) # v3.6-26
+library(dismo) # v1.3-14
+library(leaflet) # v2.2.2
+library(htmltools) # v0.5.8.1
+library(leaflegend) # v1.2.8
+library(terra) # v1.7-71
+library(GGally) # v2.2.1
+
+# ResistanceGA
+library(JuliaCall) # v0.17.5
+library(ResistanceGA) # devtools::install_github("wpeterman/ResistanceGA", build_vignettes = FALSE) v4.2-10
+library(openxlsx) # v4.2.6.1
+
+# Plotting
+library(ggplot2) # v3.5.1
+library(ggpubr) # v0.6.0
+
+# Other attached packages
+library(adegenet) # v2.1.10
+library(ade4) # v1.7-22
+
+```
+
+```{r Directories}
+
+# Main directory for data
+data_dir <- paste0(getwd(),"/data")
+
+# Input data directory for this script
+input_data_dir <- paste0(data_dir,"/land-res-data")
+eems_input_dir <- paste0(input_data_dir,"/eems-input/input")
+dir.create(eems_input_dir, recursive = TRUE)
+
+# Results directories for this script
+
+eems_result_dir <- paste0(getwd(),"/results/5-landscape-resistance/5.1-EEMS")
+dir.create(paste0(eems_result_dir,"/_PLOTS"), recursive = TRUE)
+
+resga_result_dir <- paste0(getwd(),"/results/5-landscape-resistance/5.2-ResistanceGA")
+dir.create(paste0(resga_result_dir,"/_PLOTS"), recursive = TRUE)
+# The plots for this analysis were created in QGIS and saved to _PLOTS
+
+```
+
+# Analysis
+
+## 5.1 EEMS
+
+```{r Create input}
+
+# Load dataset
+genlight <- readRDS(paste0(input_data_dir,"/genetic-data/BTF-3-107-14788-neutral-unrel.RData"))
+
+# Create genetic dissimilarity matrix for EEMS (function taken from dartR.spatial gl.run.eems function)
+bed2diffs <- function(Geno) {
+  nIndiv <- nrow(Geno)
+  nSites <- ncol(Geno)
+  Miss <- is.na(Geno)
+  Mean <- matrix(colMeans(Geno, na.rm = TRUE), nrow = nIndiv, 
+                 ncol = nSites, byrow = TRUE)
+  Mean[Miss == 0] <- 0
+  Geno[Miss == 1] <- 0
+  Geno <- Geno + Mean
+  Sim <- Geno %*% t(Geno)/nSites
+  SelfSim <- diag(Sim)
+  vector1s <- rep(1, nIndiv)
+  Diffs <- SelfSim %*% t(vector1s) + vector1s %*% t(SelfSim) - 
+    2 * Sim
+  Diffs
+}
+
+GD_diffs <- bed2diffs(as.matrix(genlight))
+write.table(GD_diffs, file = paste0(eems_input_dir,"/input/EEMS.diffs"),col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+# Load sample coordinates
+sample_coords <- as.data.frame(genlight@other$latlon[,c("lon","lat")])
+
+# Create coordinates file
+write.table(sample_coords, file = paste0(eems_input_dir,"/input/EEMS.coord"), row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+# Export the coordinates of the polygon that is made up by the coastline and a 50km buffer around points
+polygon <- st_read(paste0(input_data_dir,"/input/area-polygon/Area_polygon_15km_buffer.shx"))
+polygon_coords <- st_coordinates(polygon)[, 1:2]
+write.table(polygon_coords, file = paste0(eems_input_dir,"/input/EEMS.outer"), row.names = FALSE, col.names = FALSE, quote = FALSE)
+
+# Number of demes to use = Total area / 10000 (100km2 box)
+polygon_area <- st_area(polygon)0
+area_km <- as.numeric(polygon_area)/1000000 #convert from metres2 to km2
+demes <- area_km/10
+
+# Also create EEMS parameter init files and save to eems_input_dir
+
+```
+
+Run EEMS via command line using the init files, saving the results to eems_result_dir, then plot results below
+Example: 5-runeems_snps.exe --params ./data/land-res-data/eems-input/EEMS_nDemes50_run1.ini --seed 1111
+
+```{r Plot EEMS results}
+
+# MCMC path
+
+# nDemes_50
+nDemes_50_run1_mcmcpath <- paste0(eems_result_dir,"/nDemes_50/Run1/")
+nDemes_50_run2_mcmcpath <- paste0(eems_result_dir,"/nDemes_50/Run2/")
+nDemes_50_run3_mcmcpath <- paste0(eems_result_dir,"/nDemes_50/Run3/")
+
+# nDemes_100
+nDemes_100_run1_mcmcpath <- paste0(eems_result_dir,"/nDemes_100/Run1/")
+nDemes_100_run2_mcmcpath <- paste0(eems_result_dir,"/nDemes_100/Run2/")
+nDemes_100_run3_mcmcpath <- paste0(eems_result_dir,"/nDemes_100/Run3/")
+
+# nDemes_200
+nDemes_200_run1_mcmcpath <- paste0(eems_result_dir,"/nDemes_200/Run1/")
+nDemes_200_run2_mcmcpath <- paste0(eems_result_dir,"/nDemes_200/Run2/")
+nDemes_200_run3_mcmcpath <- paste0(eems_result_dir,"/nDemes_200/Run3/")
+
+# nDemes_500
+nDemes_500_run1_mcmcpath <- paste0(eems_result_dir,"/nDemes_500/Run1/")
+nDemes_500_run2_mcmcpath <- paste0(eems_result_dir,"/nDemes_500/Run2/")
+nDemes_500_run3_mcmcpath <- paste0(eems_result_dir,"/nDemes_500/Run3/")
+
+# Set plot out path
+
+# nDemes_50
+{nDemes_50_run1_plot.out <- file.path(getwd(), nDemes_50_run1_mcmcpath, "Plots") # Set plot out path 
+  dir.create(nDemes_50_run1_plot.out, recursive = TRUE, showWarnings = FALSE)} # Create the directory if it doesn't exist
+{nDemes_50_run2_plot.out <- file.path(getwd(), nDemes_50_run2_mcmcpath, "Plots")
+  dir.create(nDemes_50_run2_plot.out, recursive = TRUE, showWarnings = FALSE)}
+{nDemes_50_run3_plot.out <- file.path(getwd(), nDemes_50_run3_mcmcpath, "Plots")
+  dir.create(nDemes_50_run3_plot.out, recursive = TRUE, showWarnings = FALSE)}
+# nDemes_50 combined
+{nDemes_50_final_plot.out <- file.path(paste0(eems_result_dir,"/_PLOTS/nDemes_50"))
+  dir.create(nDemes_50_final_plot.out, recursive = TRUE, showWarnings = FALSE)}
+
+# nDemes_100
+{nDemes_100_run1_plot.out <- file.path(getwd(), nDemes_100_run1_mcmcpath, "Plots") # Set plot out path 
+  dir.create(nDemes_100_run1_plot.out, recursive = TRUE, showWarnings = FALSE)} # Create the directory if it doesn't exist
+{nDemes_100_run2_plot.out <- file.path(getwd(), nDemes_100_run2_mcmcpath, "Plots")
+  dir.create(nDemes_100_run2_plot.out, recursive = TRUE, showWarnings = FALSE)}
+{nDemes_100_run3_plot.out <- file.path(getwd(), nDemes_100_run3_mcmcpath, "Plots")
+  dir.create(nDemes_100_run3_plot.out, recursive = TRUE, showWarnings = FALSE)}
+# nDemes_100 combined
+{nDemes_100_final_plot.out <- file.path(paste0(eems_result_dir,"/_PLOTS/nDemes_100"))
+  dir.create(nDemes_100_final_plot.out, recursive = TRUE, showWarnings = FALSE)}
+
+# nDemes_200
+{nDemes_200_run1_plot.out <- file.path(getwd(), nDemes_200_run1_mcmcpath, "Plots") # Set plot out path 
+  dir.create(nDemes_200_run1_plot.out, recursive = TRUE, showWarnings = FALSE)} # Create the directory if it doesn't exist
+{nDemes_200_run2_plot.out <- file.path(getwd(), nDemes_200_run2_mcmcpath, "Plots")
+  dir.create(nDemes_200_run2_plot.out, recursive = TRUE, showWarnings = FALSE)}
+{nDemes_200_run3_plot.out <- file.path(getwd(), nDemes_200_run3_mcmcpath, "Plots")
+  dir.create(nDemes_200_run3_plot.out, recursive = TRUE, showWarnings = FALSE)}
+# nDemes_200 combined
+{nDemes_200_final_plot.out <- file.path(paste0(eems_result_dir,"/_PLOTS/nDemes_200"))
+  dir.create(nDemes_200_final_plot.out, recursive = TRUE, showWarnings = FALSE)}
+
+# nDemes_500
+{nDemes_500_run1_plot.out <- file.path(getwd(), nDemes_500_run1_mcmcpath, "Plots") # Set plot out path 
+  dir.create(nDemes_500_run1_plot.out, recursive = TRUE, showWarnings = FALSE)} # Create the directory if it doesn't exist
+{nDemes_500_run2_plot.out <- file.path(getwd(), nDemes_500_run2_mcmcpath, "Plots")
+  dir.create(nDemes_500_run2_plot.out, recursive = TRUE, showWarnings = FALSE)}
+{nDemes_500_run3_plot.out <- file.path(getwd(), nDemes_500_run3_mcmcpath, "Plots")
+  dir.create(nDemes_500_run3_plot.out, recursive = TRUE, showWarnings = FALSE)}
+# nDemes_500 combined
+{nDemes_500_final_plot.out <- file.path(paste0(eems_result_dir,"/_PLOTS/nDemes_500"))
+  dir.create(nDemes_500_final_plot.out, recursive = TRUE, showWarnings = FALSE)}
+
+# Load adjusted reemsplot scripts
+source("5-reemsplot_package_adjusted.R")
+
+# nDemes_50
+nDemes_50_run1_eems_plots <- make_eems_plots2(nDemes_50_run1_mcmcpath, longlat = TRUE, add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+nDemes_50_run2_eems_plots <- make_eems_plots2(nDemes_50_run2_mcmcpath, longlat = TRUE, add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+nDemes_50_run3_eems_plots <- make_eems_plots2(nDemes_50_run3_mcmcpath, longlat = TRUE, add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+
+nDemes_50_final_eems_plots <- make_eems_plots2(c(nDemes_50_run1_mcmcpath,nDemes_50_run2_mcmcpath,nDemes_50_run3_mcmcpath), longlat = TRUE, 
+                                          add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+
+# nDemes_100
+nDemes_100_run1_eems_plots <- make_eems_plots2(nDemes_100_run1_mcmcpath, longlat = TRUE, add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+nDemes_100_run2_eems_plots <- make_eems_plots2(nDemes_100_run2_mcmcpath, longlat = TRUE, add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+nDemes_100_run3_eems_plots <- make_eems_plots2(nDemes_100_run3_mcmcpath, longlat = TRUE, add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+
+nDemes_100_final_eems_plots <- make_eems_plots2(c(nDemes_100_run1_mcmcpath,nDemes_100_run2_mcmcpath,nDemes_100_run3_mcmcpath), longlat = TRUE, 
+                                          add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+
+# nDemes_200
+nDemes_200_run1_eems_plots <- make_eems_plots2(nDemes_200_run1_mcmcpath, longlat = TRUE, add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+nDemes_200_run2_eems_plots <- make_eems_plots2(nDemes_200_run2_mcmcpath, longlat = TRUE, add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+nDemes_200_run3_eems_plots <- make_eems_plots2(nDemes_200_run3_mcmcpath, longlat = TRUE, add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+
+nDemes_200_final_eems_plots <- make_eems_plots2(c(nDemes_200_run1_mcmcpath,nDemes_200_run2_mcmcpath,nDemes_200_run3_mcmcpath), longlat = TRUE, 
+                                         add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+
+# nDemes_500
+nDemes_500_run1_eems_plots <- make_eems_plots2(nDemes_500_run1_mcmcpath, longlat = TRUE, add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+nDemes_500_run2_eems_plots <- make_eems_plots2(nDemes_500_run2_mcmcpath, longlat = TRUE, add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+nDemes_500_run3_eems_plots <- make_eems_plots2(nDemes_500_run3_mcmcpath, longlat = TRUE, add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+
+nDemes_500_final_eems_plots <- make_eems_plots2(c(nDemes_500_run1_mcmcpath,nDemes_500_run2_mcmcpath,nDemes_500_run3_mcmcpath), longlat = TRUE, 
+                                                add_grid = T, add_demes = T, add_outline = T, add_abline = T)
+
+# Save the various plots
+
+# Create list of pops/runs
+runs <- c("nDemes_50_run1","nDemes_50_run2","nDemes_50_run3","nDemes_50_final",
+          "nDemes_100_run1","nDemes_100_run2","nDemes_100_run3","nDemes_100_final",
+          "nDemes_200_run1","nDemes_200_run2","nDemes_200_run3","nDemes_200_final",
+          "nDemes_500_run1","nDemes_500_run2","nDemes_500_run3","nDemes_500_final")
+     
+for (run in runs){
+  
+  # Print EEMS maps
+  plotpath <- get(paste0(run, "_plot.out")) # Set plot out.path
+  ggsave(file.path(plotpath, paste0(run, "_EEMS_mrates01.png")), get(paste0(run,"_eems_plots"))$mrates01, dpi = 600, width = 6, height = 4)
+  ggsave(file.path(plotpath, paste0(run, "_EEMS_mrates02.png")), get(paste0(run,"_eems_plots"))$mrates02, dpi = 600, width = 6, height = 4)
+  ggsave(file.path(plotpath, paste0(run, "_EEMS_qrates01.png")), get(paste0(run,"_eems_plots"))$qrates01, dpi = 600, width = 6, height = 4)
+  ggsave(file.path(plotpath, paste0(run, "_EEMS_qrates02.png")), get(paste0(run,"_eems_plots"))$qrates02, dpi = 600, width = 6, height = 4)
+  ggsave(file.path(plotpath, paste0(run, "_EEMS_rdist01.pdf")), get(paste0(run,"_eems_plots"))$rdist01, width = 6.5, height = 6)
+  ggsave(file.path(plotpath, paste0(run, "_EEMS_rdist02.pdf")), get(paste0(run,"_eems_plots"))$rdist02, width = 6.5, height = 6)
+  ggsave(file.path(plotpath, paste0(run, "_EEMS_rdist03.pdf")), get(paste0(run,"_eems_plots"))$rdist03, width = 6.5, height = 6)
+  ggsave(file.path(plotpath, paste0(run, "_EEMS_pilogl01.pdf")), get(paste0(run,"_eems_plots"))$pilogl01, width = 7, height = 5)
+}
+
+  # Make an interactive map of samples and EEMS on landscape for combined final EEMS output
+  library(leaflet)
+  library(htmlwidgets)
+  library(webshot2)
+  library(magick)
+  library(raster)
+  
+final_runs <- c("nDemes_50_final", "nDemes_100_final", "nDemes_200_final", "nDemes_500_final")
+
+for (run in final_runs){
+  
+    # Input genlight for mapping
+    gl <- genlight
+    
+    # Create a raster from the EEMS results map 1 and set crs
+    rast <- raster::rasterFromXYZ(get(paste0(run,"_eems_plots"))[[1]]$data) 
+    crs(rast) <- "+proj=longlat +datum=WGS84 +no_defs"
+    rast.path <- file.path(get(paste0(run,"_plot.out")), paste0(run, "_mrates01_raster.tif"))
+    writeRaster(rast, filename = rast.path, overwrite = TRUE)
+    
+    # Set colour and scale or raster colours to match EEMS output plots
+    colors <- colorNumeric(palette = c("#994000","#CC5800","#FF8F33","#FFAD66","#FFCA99","#FFE6CC","#FBFBFB",
+                                       "#CCFDFF","#99F8FF","#66F0FF","#33E4FF","#00AACC","#007A99"), domain = c(-2, 2))
+
+    # Calculate the centre coordinates for the raster to target map
+    bbox <- extent(rast)
+    center_long <- (bbox@xmin + bbox@xmax) / 2
+    center_lat <- (bbox@ymin + bbox@ymax) / 2
+    
+    # Make interactive leaflet map
+    map1 <- gl.map.interactive(gl, provider = "Esri.WorldImagery", ind.circle.transparency = 0, pop.labels = FALSE) %>% 
+      addRasterImage(raster(rast.path), colors = colors, opacity = 0.7) %>%
+      setView(lng = center_long, lat = center_lat, zoom = 10) %>%
+      leaflet::addCircleMarkers(lng = gl@other$latlon$lon, lat = gl@other$latlon$lat, 
+                                popup = gl@ind.names, stroke = TRUE, color = "white", opacity = 1, weight = 1,
+                                fill = TRUE, fillColor = "black", fillOpacity = 1, radius = 5)%>%
+      addLegend(pal = colors, 
+              values = c(-2, 2),   # Explicitly set the legend scale
+              title = "log(m)",
+              position = "topleft")
+
+    
+    # Save an interactive html map
+    interactive.map.out.path1 <- file.path(get(paste0(run, "_plot.out")), paste0(run, "_map.html"))
+    saveWidget(map1, file = interactive.map.out.path1, selfcontained = TRUE) # Doesn't let you name the output file more than 13 characters
+    
+    # If getting ERROR: `google-chrome` and `chromium-browser` were not found.
+    # Set the following path to your preferred google chrome browser
+    #Sys.setenv(CHROMOTE_CHROME = "C:/Program Files/Mozilla Firefox/firefox.exe")
+    #chromote::find_chrome() # Should output "C:/Program Files/Mozilla Firefox/firefox.exe"
+    
+    # Save a .png image of interactive map
+    # Convert the HTML to PNG
+    webshot(interactive.map.out.path1, file = file.path(tempdir(),"map1.png"), vwidth = 800, vheight = 650, zoom = 1, delay = 5)
+    # Read in image (to crop bottom)
+    image <- image_read(file.path(tempdir(),"map1.png"))
+    # Define the crop area
+    cropped_legend <- image_crop(image, geometry_area(width = 63, height = 210, x_off = 11, y_off = 87))
+    cropped_image <- image_crop(image, geometry_area(width = 640, height = 950, x_off = 650, y_off = 160))
+    final_image <- image_composite(cropped_image, cropped_legend, offset = "+500+400") # Overlay legend on map
+    final_image
+    image_write(final_image, path = file.path(get(paste0(run, "_plot.out")), paste0(run, "_mrates01_map.png")))
+}
+
+```
+
+Final plots for EEMS made with QGIS
+
+## 5.2 ResistanceGA
+
+```{r Set up Julia}
+
+# Install Julia by downloading the installer (.exe) for windows here: https://julialang.org/downloads/ (scroll down to Official Binaries for Manual Download) - or follow the download recommendation at the top for your os. Make sure to select 'add to PATH' when installing.
+
+# Open Julia outside R and install Circuitscape with:
+# using Pkg
+# Pkg.add("Circuitscape")
+# Pkg.test("Circuitscape")
+
+# The link between julia and R doesn't fully stop after running optimisation so after running SS_optim or MS_optim then restart R with control+shift+F10.
+# Due to this you will need to set up the cluster using Do Parallel before each optimisation you run or it crashes.
+
+JULIA_HOME <- "C:/Users/kskye/AppData/Local/Programs/Julia-1.10.9/bin"
+JuliaCall::julia_setup(JULIA_HOME, useRCall = TRUE)
+
+# If you get the error below, try installing an older version of Julia - e.g. the long term release version rather than the latest stable version
+# Error: jl_stdout_obj - The specified procedure could not be found.
+
+```
+
+```{r Genetic distance matrix}
+
+# Import genlight
+setwd(paste0(input_data_dir,"/genetic-data"))
+data <- readRDS("BTF-3-107-14788-neutral-unrel.RData")
+
+# Remove unwanted samples
+data2 <- gl.drop.ind(data,ind.list = drop_list,recalc = TRUE,mono.rm = TRUE)
+
+# Generate genetic distance matrix
+gen_dist <- gl.dist.ind(data2, method = "euclidean", output = "matrix", scale = T)
+
+# Save the matrix for importing later
+setwd(paste0(input_data_dir,"/genetic-data"))
+write.table(gen_dist, "BTF-3-98-14772-euc-gen-dist-scaled-matrix.txt")
+
+```
+
+```{r Single surface optimization}
+
+# Load sample coordinates
+sample_points <- read.csv(paste0(input_data_dir,"/genetic-data/BTF-final-samples-post-filtering-unrel-250mRes-coords.csv"), header = TRUE) 
+drop_list <- c("C_BTF9","C_BTF11","C_BTF41","C_BTF49","C_BTF10","C_BTF44","C_BTF5","C_BTF38","C_BTF24")
+sample_points_250m <- sample_points[!(sample_points$id %in% drop_list), ] # Drop samples not used in 250m resolution
+sample_points_250m
+sp.dat <- SpatialPoints(sample_points_250m[, c("X250m_lon", "X250m_lat")], proj4string = CRS("epsg:4326"))
+sp.dat
+
+# Load GD matrix
+GD <- read.table(paste0(input_data_dir,"/genetic-data/BTF-3-98-14772-euc-gen-dist-scaled-matrix.txt"), header = TRUE, row.names = 1, sep = " ")
+GD <- GD[sample_points_250m$id,sample_points_250m$id] # Sort GD matrix so it's in the same order as sample coordinates list
+
+# Set julia inputs
+jl.inputs <- jl.prep(n.Pops = length(sp.dat),
+                     response = lower(GD),
+                     CS_Point.File = sp.dat,
+                     JULIA_HOME = JULIA_HOME,
+                     cholmod = T,
+                     run_test = F)
+
+# Categorical variables
+cat_layers <- c("CC", "CH", "VE", "HS")
+
+# For categorical variables: Run single surface optimisation for 2 runs for each raster
+for (layer in cat_layers){
+  
+  Raster_layer <- raster(paste0(input_data_dir,"/rasters/",layer,".tif"))
+  
+  Results.dir1 <- paste0(resga_result_dir,"/SS_optim/", layer, "/Run_1/")
+  if (!dir.exists(Results.dir1)) {dir.create(Results.dir1, recursive = TRUE)}
+  Results.dir2 <- paste0(resga_result_dir,"/SS_optim/", layer, "/Run_2/")
+  if (!dir.exists(Results.dir2)) {dir.create(Results.dir2, recursive = TRUE)}
+  
+  # Set variables for GA optim and run optimisation
+  GA.inputs_cat_1 <- GA.prep(ASCII.dir = Raster_layer, 
+                             Results.dir = Results.dir1,
+                             parallel = 3, # set no. cores
+                             seed = 1111,
+                             cat.levels = 21,
+                             max.cat = 1000)
+  SS_optim(jl.inputs = jl.inputs, GA.inputs = GA.inputs_cat_1)
+  cat(paste0(layer, " run 1 complete\n"))
+  
+  GA.inputs_cat_2 <- GA.prep(ASCII.dir = Raster_layer, 
+                             Results.dir = Results.dir2,
+                             parallel = 3, # set no. cores
+                             seed = 2222,
+                             cat.levels = 21,
+                             max.cat = 1000)
+  SS_optim(jl.inputs = jl.inputs, GA.inputs = GA.inputs_cat_2)
+  cat(paste0(layer, " run 2 complete\n"))
+  
+  rm("Raster_layer","GA.inputs_cat_1","GA.inputs_cat_2","Results.dir1","Results.dir2")
+}
+
+
+# For continuous variables: Run single surface optimisation for 2 runs for each raster
+cont_layers <- c("DB","DE","WB","WE")
+for (layer in cont_layers){
+  
+  Raster_layer <- raster(paste0(input_data_dir,"/rasters/",layer,".tif"))
+  
+  Results.dir1 <- paste0(resga_result_dir,"/SS_optim/", layer, "/Run_1/")
+  if (!dir.exists(Results.dir1)) {dir.create(Results.dir1, recursive = TRUE)}
+  Results.dir2 <- paste0(resga_result_dir,"/SS_optim/", layer, "/Run_2/")
+  if (!dir.exists(Results.dir2)) {dir.create(Results.dir2, recursive = TRUE)}
+  
+  # Set variables for GA optim and run optimisation
+  GA.inputs_cont_1 <- GA.prep(ASCII.dir = Raster_layer, 
+                              Results.dir = Results.dir1,
+                              parallel = 3,
+                              seed = 1111,
+                              select.trans = list("A"),
+                              max.cont = 1000)
+  SS_optim(jl.inputs = jl.inputs, GA.inputs = GA.inputs_cont_1)
+  cat(paste0(layer, " run 1 complete\n"))
+  
+  GA.inputs_cont_2 <- GA.prep(ASCII.dir = Raster_layer, 
+                              Results.dir = Results.dir2,
+                              parallel = 3,
+                              seed = 2222,
+                              select.trans = list("A"),
+                              max.cont = 1000)
+  SS_optim(jl.inputs = jl.inputs, GA.inputs = GA.inputs_cont_2)
+  cat(paste0(layer, " run 2 complete\n"))
+  
+  rm("Raster_layer","GA.inputs_cont_1","GA.inputs_cont_2","Results.dir1","Results.dir2")
+}
+
+
+
+# Create an excel file with summaries from both runs of all layers
+{
+  cat_layers <- c("CC","CH","VE","HS")
+  cont_layers <- c("DB","DE","WB","WE")
+  
+  # Set up excel worksheet to export data to and add sheets for each SAC test
+  wb <- createWorkbook()
+  
+  # Make AICc out dataframe and add null and distance results
+  FILE <- read.csv(paste0(resga_result_dir,"/SS_optim/CC/Run_1/Results/All_Results_Table.csv"))
+  DIST <- FILE[FILE$Surface == "Distance",]
+  Null <- FILE[FILE$Surface == "Null",]
+  run1 <- data.frame("Run1","","","","","","","")
+  colnames(run1) <- colnames(FILE)
+  run2 <- data.frame("Run2","","","","","","","")
+  colnames(run2) <- colnames(FILE)
+  AICc_run1.df <- rbind(run1,DIST,Null)
+  AICc_run2.df <- rbind(run2,DIST,Null)
+  
+  # Make blank dataframes for  cat and cont names
+  CAT <- data.frame("Categorical_layers","","","","","","","")
+  colnames(CAT) <- colnames(AICc_run1.df)
+  CONT <- data.frame("Continuous_layers","","","","","","","")
+  colnames(CONT) <- colnames(AICc_run1.df)
+  
+  # Blank data.frames for output
+  CAT_AICc_run1 <- data.frame()
+  CAT_AICc_run2 <- data.frame()
+  CONT_AICc_run1 <- data.frame()
+  CONT_AICc_run2 <- data.frame()
+  CAT_values_run1 <- data.frame()
+  CAT_values_run2 <- data.frame()
+  CONT_values_run1 <- data.frame()
+  CONT_values_run2 <- data.frame()
+  
+  # Values col names
+  values_colnames_cat <- c("Surface","obj.func_LL","k","AIC","AICc","R2m","R2c","LL","Feature1","Feature2","Feature3","Feature4","Feature5",
+                           "Feature6","Feature7","Feature8","Feature9","Feature10","Feature11","Feature12","Feature13","Feature14","Feature15",
+                           "Feature16","Feature17","Feature18","Feature19","Feature20","Feature21")
+  values_colnames_cont <- data.frame("Surface","obj.func_LL","k","AIC","AICc","R2m","R2c","LL","Equation","shape","max")
+  colnames(values_colnames_cont) <- NULL
+  
+  # Find the maximum amount of layer values
+  max_values_list <- list()
+  for (layer in cat_layers){
+    layer_values <- read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_1/Results/CategoricalResults.csv"))
+    max_values_list[[layer]] <- layer_values
+  }
+  max_value <- max(sapply(max_values_list, ncol))
+  
+  # Combine results from each run of cat layers
+  for (layer in cat_layers){
+    layer_name <- layer
+    
+    # AICc
+    run1_AICc <- read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_1/Results/All_Results_Table.csv"))
+    run1_AICc_layer <- run1_AICc[run1_AICc$Surface == layer_name,]
+    CAT_AICc_run1 <- rbind(CAT_AICc_run1,run1_AICc_layer)
+    
+    run2_AICc <- read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_2/Results/All_Results_Table.csv"))
+    run2_AICc_layer <- run2_AICc[run2_AICc$Surface == layer_name,]
+    CAT_AICc_run2 <- rbind(CAT_AICc_run2,run2_AICc_layer)
+    
+    # Values
+    run1_values <- read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_1/Results/CategoricalResults.csv"))
+    blank_cols <- data.frame(matrix("", nrow = 1, ncol = max_value-length(run1_values)))
+    run1_values.df <- cbind(run1_values, blank_cols)
+    colnames(run1_values.df) <- values_colnames_cat[1:max_value]
+    CAT_values_run1 <- rbind(CAT_values_run1, run1_values.df)
+    
+    run2_values <- read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_2/Results/CategoricalResults.csv"))
+    blank_cols <- data.frame(matrix("", nrow = 1, ncol = max_value-length(run2_values)))
+    run2_values.df <- cbind(run2_values, blank_cols)
+    colnames(run2_values.df) <- values_colnames_cat[1:max_value]
+    CAT_values_run2 <- rbind(CAT_values_run2, run2_values.df)
+  }
+  
+  for (layer in cont_layers){
+    layer_name <- layer
+    
+    # AICc
+    run1_AICc <- read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_1/Results/All_Results_Table.csv"))
+    run1_AICc_layer <- run1_AICc[run1_AICc$Surface == layer_name,]
+    CONT_AICc_run1 <- rbind(CONT_AICc_run1,run1_AICc_layer)
+    
+    run2_AICc <- read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_2/Results/All_Results_Table.csv"))
+    run2_AICc_layer <- run2_AICc[run2_AICc$Surface == layer_name,]
+    CONT_AICc_run2 <- rbind(CONT_AICc_run2,run2_AICc_layer)
+    
+    # Values
+    run1_values <- read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_1/Results/ContinuousResults.csv"))
+    CONT_values_run1 <- rbind(CONT_values_run1, run1_values)
+    
+    run2_values <- read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_2/Results/ContinuousResults.csv"))
+    CONT_values_run2 <- rbind(CONT_values_run2, run2_values)
+  } 
+  
+  # Combine cat and cont layers then combine both runs for AICc
+  AICc_run1.df <- rbind(AICc_run1.df,"",CAT,CAT_AICc_run1,"",CONT,CONT_AICc_run1)
+  AICc_run2.df <- rbind(AICc_run2.df,"",CAT,CAT_AICc_run2,"",CONT,CONT_AICc_run2)
+  AICc.df <- cbind(AICc_run1.df,"",AICc_run2.df)
+  
+  # Combine cat and cont layers then combine both runs for optimised values
+  Cat_values_run1_name <- cbind(data.frame("Categorical_run1"), data.frame(matrix("", nrow = 1, ncol = max_value-1)))
+  colnames(Cat_values_run1_name) <- colnames(CAT_values_run1)
+  Cat_values_run2_name <- cbind(data.frame("Categorical_run2"), data.frame(matrix("", nrow = 1, ncol = max_value-1)))
+  colnames(Cat_values_run2_name) <- colnames(CAT_values_run1)
+  values_CAT.df <- rbind(Cat_values_run1_name,CAT_values_run1,"",Cat_values_run2_name,CAT_values_run2)
+  
+  CONT_values_run1_name <- cbind(data.frame("Continuous_run1"), data.frame(matrix("", nrow = 1, ncol = max_value-1)))
+  colnames(CONT_values_run1_name) <- colnames(values_CAT.df)
+  CONT_values_run2_name <- cbind(data.frame("Continuous_run2"), data.frame(matrix("", nrow = 1, ncol = max_value-1)))
+  colnames(CONT_values_run2_name) <- colnames(values_CAT.df)
+  CONT_blank <- data.frame(matrix("", nrow = nrow(CONT_values_run1), ncol = max_value-length(CONT_values_run1)))
+  CONT_values_run1.df <- cbind(CONT_values_run1, CONT_blank)
+  colnames(CONT_values_run1.df) <- colnames(values_CAT.df)
+  CONT_values_run2.df <- cbind(CONT_values_run2, CONT_blank)
+  colnames(CONT_values_run2.df) <- colnames(values_CAT.df)
+  values_colnames_cont <- cbind(values_colnames_cont, data.frame(matrix("", nrow = 1, ncol = max_value - ncol(values_colnames_cont))))
+  colnames(values_colnames_cont) <- colnames(values_CAT.df)
+  values_CONT.df <- rbind(values_colnames_cont,CONT_values_run1_name,CONT_values_run1.df,"",CONT_values_run2_name,CONT_values_run2.df)
+  
+  values.df <- rbind(values_CAT.df,"",values_CONT.df)
+  
+  # Add worksheets
+  addWorksheet(wb,"AICc")
+  addWorksheet(wb,"Optim.values")    
+  
+  # Write data to the worksheets
+  writeData(wb, sheet = "AICc", AICc.df)
+  writeData(wb, sheet = "Optim.values", values.df)
+  
+  # Save the workbook
+  saveWorkbook(wb, file = paste0(resga_result_dir,"/SS-optim_summaries.xlsx"), overwrite = TRUE)
+}
+
+```
+
+```{r Single surface optimization - Higher max resistance threshold}
+
+# Load sample coordinates
+sample_points <- read.csv(paste0(input_data_dir,"/genetic-data/BTF-final-samples-post-filtering-unrel-250mRes-coords.csv"), header = TRUE) 
+drop_list <- c("C_BTF9","C_BTF11","C_BTF41","C_BTF49","C_BTF10","C_BTF44","C_BTF5","C_BTF38","C_BTF24")
+sample_points_250m <- sample_points[!(sample_points$id %in% drop_list), ] # Drop samples not used in 250m resolution
+sample_points_250m
+sp.dat <- SpatialPoints(sample_points_250m[, c("X250m_lon", "X250m_lat")], proj4string = CRS("epsg:4326"))
+sp.dat
+
+# Load GD matrix
+GD <- read.table(paste0(input_data_dir,"/genetic-data/BTF-3-98-14772-euc-gen-dist-scaled-matrix.txt"), header = TRUE, row.names = 1, sep = " ")
+GD <- GD[sample_points_250m$id,sample_points_250m$id] # Sort GD matrix so it's in the same order as sample coordinates list
+GD
+
+# Set julia inputs
+jl.inputs <- jl.prep(n.Pops = length(sp.dat),
+                     response = lower(GD),
+                     CS_Point.File = sp.dat,
+                     JULIA_HOME = JULIA_HOME,
+                     cholmod = T,
+                     run_test = F)
+
+
+# Categorical variables
+cat_layers <- c("VE","CH","CC","HS")
++
+# For categorical variables: Run single surface optimisation for 2 runs for each raster
+for (layer in cat_layers){
+  
+  Raster_layer <- raster(paste0(input_data_dir,"/rasters/",layer,".tif"))
+  
+  Results.dir1 <- paste0(resga_result_dir,"/SS_optim_max2000/", layer, "/Run_1/")
+  if (!dir.exists(Results.dir1)) {dir.create(Results.dir1, recursive = TRUE)}
+  Results.dir2 <- paste0(resga_result_dir,"/SS_optim_max2000/", layer, "/Run_2/")
+  if (!dir.exists(Results.dir2)) {dir.create(Results.dir2, recursive = TRUE)}
+  
+  # Set variables for GA optim and run optimisation
+  GA.inputs_cat_1 <- GA.prep(ASCII.dir = Raster_layer, 
+                             Results.dir = Results.dir1,
+                             parallel = 3, # set no. cores
+                             seed = 1111,
+                             cat.levels = 21,
+                             min.cat = 0.0005,
+                             max.cat = 2000)
+  SS_optim(jl.inputs = jl.inputs, GA.inputs = GA.inputs_cat_1)
+  cat(paste0(layer, " run 1 complete\n"))
+  
+  GA.inputs_cat_2 <- GA.prep(ASCII.dir = Raster_layer, 
+                             Results.dir = Results.dir2,
+                             parallel = 3, # set no. cores
+                             seed = 2222,
+                             cat.levels = 21,
+                             min.cat = 0.0005,
+                             max.cat = 2000)
+  SS_optim(jl.inputs = jl.inputs, GA.inputs = GA.inputs_cat_2)
+  cat(paste0(layer, " run 2 complete\n"))
+  
+  rm("Raster_layer","GA.inputs_cat_1","GA.inputs_cat_2","Results.dir1","Results.dir2")
+}
+
+# For continuous variables: Run single surface optimisation for 2 runs for each raster
+cont_layers <- c("DB","DE","WB","WE")
+for (layer in cont_layers){
+  
+  Raster_layer <- raster(paste0(input_data_dir,"/rasters/",layer,".tif"))
+  
+  Results.dir1 <- paste0(resga_result_dir,"/SS_optim_max2000/", layer, "/Run_1/")
+  if (!dir.exists(Results.dir1)) {dir.create(Results.dir1, recursive = TRUE)}
+  Results.dir2 <- paste0(resga_result_dir,"/SS_optim_max2000/", layer, "/Run_2/")
+  if (!dir.exists(Results.dir2)) {dir.create(Results.dir2, recursive = TRUE)}
+  
+  # Set variables for GA optim and run optimisation
+  GA.inputs_cont_1 <- GA.prep(ASCII.dir = Raster_layer, 
+                              Results.dir = Results.dir1,
+                              parallel = 3,
+                              seed = 1111,
+                              select.trans = list("A"),
+                              max.cont = 2000)
+  SS_optim(jl.inputs = jl.inputs, GA.inputs = GA.inputs_cont_1)
+  cat(paste0(layer, " run 1 complete\n"))
+  
+  GA.inputs_cont_2 <- GA.prep(ASCII.dir = Raster_layer, 
+                              Results.dir = Results.dir2,
+                              parallel = 3,
+                              seed = 2222,
+                              select.trans = list("A"),
+                              max.cont = 2000)
+  SS_optim(jl.inputs = jl.inputs, GA.inputs = GA.inputs_cont_2)
+  cat(paste0(layer, " run 2 complete\n"))
+  
+  rm("Raster_layer","GA.inputs_cont_1","GA.inputs_cont_2","Results.dir1","Results.dir2")
+}
+
+
+
+```
+
+```{r Single surface bootstrapping}
+
+## Run bootstrapping for all layers using the run with the lowest AICc
+
+{
+  # Total number of observations = number of samples
+  obs <- length(GD) 
+  
+  # Create a list of all optimised landscape resistance matrices and distance only resistance matrix created via circuitscape.
+  all_layers <- c("CC","CH","HS","DB","DE","WB","WE")
+ 
+  # Make a list of the best run for each layer
+  best_run.df <- data.frame()
+  
+  for (layer in all_layers){
+    layer_name <- layer
+    run1 <- read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_1/Results/All_Results_Table.csv"))
+    run1_AICc <- run1[run1$Surface == layer_name,"AICc"]
+    run1_k <- run1[run1$Surface == layer_name,"k"]
+    run2 <- read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_2/Results/All_Results_Table.csv"))
+    run2_AICc <- run2[run2$Surface == layer_name,"AICc"]
+    run2_k <- run2[run2$Surface == layer_name,"k"]
+    
+    if (run1_AICc <= run2_AICc){
+      df <- data.frame("Layer" = layer, "Run" = 1, "k" = run1_k)
+      best_run.df <- rbind(best_run.df, df)
+    } else {
+      df <- data.frame("Layer" = layer, "Run" = 2, "k" = run2_k)
+      best_run.df <- rbind(best_run.df, df)
+    }
+    rm("layer_name","run1","run1_AICc","run2","run2_AICc","df")
+  }
+  
+  # Create a blank list to add resistance matrices to
+  resist_mats <- list()
+  
+  # Read in resistance matrix from the best run of each layer to a list.
+  for (layer in all_layers){
+    run <- best_run.df[best_run.df$Layer == layer, "Run"]
+    resist_mat <- as.matrix(read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_", run,"/Results/",layer,"_jlResistMat.csv"), header = F))
+    resist_mats[[layer]] <- resist_mat
+  }
+  
+  # Add the distance only resistance matrix to the list (created via ResistanceGA) (jlResistMat.csv should be the same for all variables and runs in POP)
+  resist_mat <- as.matrix(read.csv(paste0(resga_result_dir,"/SS_optim/CC/Run_1/Results/Distance_jlResistMat.csv"), header = F))
+  resist_mats[["Distance"]] <- resist_mat
+  
+  # Create a list of all optimised landscape resistance matrices and distance only resistance matrix created via circuitscape.
+  mod.names <- c(all_layers,"Distance")
+  
+  # Create a vector specifying the number of parameters (k) for each landscape variable (found in the out put for each layer)
+  # Must be in the same order as the mod.names list
+  n.parameters <- c(best_run.df$k,2)
+  
+  # Run Bootstrapping for 1000 iterations
+  AIC.boot <- Resist.boot(mod.names = mod.names, dist.mat = resist_mats, 
+                          n.parameters = n.parameters, sample.prop = 0.75, iters = 1000, 
+                          obs = obs, genetic.mat = GD, rank.method = "AICc") 
+  
+  
+  # Add which run the matrix came from to output"
+  AIC.boot_sorted <- as.data.frame(AIC.boot)
+  AIC.boot_sorted <- AIC.boot_sorted[match(mod.names, AIC.boot_sorted$surface), ] # Sort so AIC.boot is in the same order as mod.names
+  
+  # List of runs used for each layer with blank for "Distance"
+  optim_run <- c(best_run.df$Run," ")
+  
+  # Add run used to output
+  AIC.boot_sorted <- cbind(surface = AIC.boot_sorted$surface,optim_run,AIC.boot_sorted[,2:11])
+  
+  # Sort from by average rank (based on 'AICc") and print results
+  AIC.boot_sorted <- AIC.boot_sorted[match(AIC.boot$surface, AIC.boot_sorted$surface), ]
+  print(AIC.boot_sorted)
+  
+  # Write results to csv
+  out.dir <- paste0(resga_result_dir,"/Bootstrapping/")
+  if (!dir.exists(out.dir)) {dir.create(out.dir, recursive = TRUE)}
+  out.file <- paste0(out.dir, "SS_optim_bootstrapping-best-run_noVE.csv")
+  write.csv(AIC.boot_sorted, file = out.file, row.names = F)
+}
+
+```
+
+```{r Single surface correlations}
+
+Results.dir1 <- paste0(resga_result_dir,"/SS_optim/Correlations/")
+if (!dir.exists(Results.dir1)) {dir.create(Results.dir1, recursive = TRUE)}
+
+setwd(Results.dir1)
+
+# HS and VE
+layer1_name <- "HS"
+layer2_name <- "VE"
+layer1 <- raster(paste0(input_data_dir,"/rasters/",layer1_name,".tif"))
+layer2 <- raster(paste0(input_data_dir,"/rasters/",layer2_name,".tif"))
+layer_stack <- stack(layer1,layer2)
+png(filename = paste0(layer1_name,"_",layer2_name,"_plot.png"))
+plot(layer_stack)
+dev.off()
+png(filename = paste0(layer1_name,"_",layer2_name,"_corr.png"))
+pairs(layer_stack)
+dev.off()
+
+# DE and WE
+layer1_name <- "DE"
+layer2_name <- "WE"
+layer1 <- raster(paste0(input_data_dir,"/rasters/",layer1_name,".tif"))
+layer2 <- raster(paste0(input_data_dir,"/rasters/",layer2_name,".tif"))
+layer_stack <- stack(layer1,layer2)
+png(filename = paste0(layer1_name,"_",layer2_name,"_plot.png"))
+plot(layer_stack)
+dev.off()
+png(filename = paste0(layer1_name,"_",layer2_name,"_corr.png"))
+pairs(layer_stack)
+dev.off()
+
+# DB and WB
+layer1_name <- "DB"
+layer2_name <- "WB"
+layer1 <- raster(paste0(input_data_dir,"/rasters/",layer1_name,".tif"))
+layer2 <- raster(paste0(input_data_dir,"/rasters/",layer2_name,".tif"))
+layer_stack <- stack(layer1,layer2)
+png(filename = paste0(layer1_name,"_",layer2_name,"_plot.png"))
+plot(layer_stack)
+dev.off()
+png(filename = paste0(layer1_name,"_",layer2_name,"_corr.png"))
+pairs(layer_stack)
+dev.off()
+
+# DB and DE
+layer1_name <- "DB"
+layer2_name <- "DE"
+layer1 <- raster(paste0(input_data_dir,"/rasters/",layer1_name,".tif"))
+layer2 <- raster(paste0(input_data_dir,"/rasters/",layer2_name,".tif"))
+layer_stack <- stack(layer1,layer2)
+png(filename = paste0(layer1_name,"_",layer2_name,"_plot.png"))
+plot(layer_stack)
+dev.off()
+png(filename = paste0(layer1_name,"_",layer2_name,"_corr.png"))
+pairs(layer_stack)
+dev.off()
+
+# WB and WE
+layer1_name <- "WB"
+layer2_name <- "WE"
+layer1 <- raster(paste0(input_data_dir,"/rasters/",layer1_name,".tif"))
+layer2 <- raster(paste0(input_data_dir,"/rasters/",layer2_name,".tif"))
+layer_stack <- stack(layer1,layer2)
+png(filename = paste0(layer1_name,"_",layer2_name,"_plot.png"))
+plot(layer_stack)
+dev.off()
+png(filename = paste0(layer1_name,"_",layer2_name,"_corr.png"))
+pairs(layer_stack)
+dev.off()
+
+# HS and DE
+layer1_name <- "HS"
+layer2_name <- "DE"
+layer1 <- raster(paste0(input_data_dir,"/rasters/",layer1_name,".tif"))
+layer2 <- raster(paste0(input_data_dir,"/rasters/",layer2_name,".tif"))
+layer_stack <- stack(layer1,layer2)
+png(filename = paste0(layer1_name,"_",layer2_name,"_plot.png"))
+plot(layer_stack)
+dev.off()
+png(filename = paste0(layer1_name,"_",layer2_name,"_corr.png"))
+pairs(layer_stack)
+dev.off()
+
+# HS and WE
+layer1_name <- "HS"
+layer2_name <- "WE"
+layer1 <- raster(paste0(input_data_dir,"/rasters/",layer1_name,".tif"))
+layer2 <- raster(paste0(input_data_dir,"/rasters/",layer2_name,".tif"))
+layer_stack <- stack(layer1,layer2)
+png(filename = paste0(layer1_name,"_",layer2_name,"_plot.png"))
+plot(layer_stack)
+dev.off()
+png(filename = paste0(layer1_name,"_",layer2_name,"_corr.png"))
+pairs(layer_stack)
+dev.off()
+
+```
+
+```{r Multi-surface optimization}
+
+{
+  # Set julia inputs
+  jl.inputs <- jl.prep(n.Pops = length(sp.dat),
+                       response = lower(GD),
+                       CS_Point.File = sp.dat,
+                       JULIA_HOME = JULIA_HOME,
+                       cholmod = T,
+                       run_test = F)
+  
+  # Get layer order from bootstrapping (ordered by ordered by avg.rank when using AICc to rank)
+  bootstrapping_results <- read.csv(paste0(resga_result_dir,"/Bootstrapping/SS_optim_bootstrapping-best-run_noVE.csv"))
+  layers <- c(bootstrapping_results$surface)
+  
+  # Get the average AICc of the highest ranked model to use as a reference
+  BestAICc <- bootstrapping_results$avg.AICc[1]
+  
+  # Get a list of layers with a rank greater than "Distance" from the second ranked layer
+  distance_index <- match("Distance", layers)
+  test_layers <- c(layers[2:(distance_index-1)])
+  
+  
+  # Load start best raster layer (highest ranked layer - lowest AICc)
+  best_layer_name <- layers[1]
+  best_layer_run <- bootstrapping_results[bootstrapping_results$surface == best_layer_name, "optim_run"]
+  Raster_layer_best <- raster(paste0(resga_result_dir,"/SS_optim/",best_layer_name,"/Run_",best_layer_run,"/Results/",best_layer_name,".asc"))
+  crs(Raster_layer_best) <- "+proj=longlat +datum=WGS84 +no_defs"
+  names(Raster_layer_best) <- best_layer_name
+  
+  
+  # MS_optim bootstrapping summary
+  bootstrapping_summary <- data.frame(bootstrapping_results[1,])
+  
+  # Run MS_optim iteratively for all layers with an AICc < ResistanceGA_Distance
+  for (layer in test_layers){
+    
+    # Set best raster layer
+    best_layer_name <- best_layer_name
+    Raster_layer_best <- Raster_layer_best
+    names(Raster_layer_best) <- best_layer_name
+    
+    # Load test raster layer
+    test_layer_name <- layer
+    test_layer_run <- bootstrapping_results[bootstrapping_results$surface == test_layer_name, "optim_run"]
+    Raster_layer_test <- raster(paste0(resga_result_dir,"/SS_optim/",test_layer_name,"/Run_",test_layer_run,"/Results/",test_layer_name,".asc"))
+    crs(Raster_layer_test) <- "+proj=longlat +datum=WGS84 +no_defs"
+    names(Raster_layer_test) <- test_layer_name
+    
+    # Set transformation list if needed
+    values_best <- length(unique(Raster_layer_best)) # Get number of unique values from raster
+    values_test <- length(unique(Raster_layer_test)) # Get number of unique values from raster
+    
+    # If raster has >22 unique values than it is continuous and set transition to "A". If not it is classified as categorical.
+    if (values_best > 22){trans_best <- "A"} else {trans_best <- NA}
+    if (values_test > 22){trans_test <- "A"} else {trans_test <- NA}  
+    
+    # Set transition list for GA.prep
+    trans_list <- list(trans_best,trans_test)
+    
+    # Create raster stack
+    r.stack <- stack(Raster_layer_best, Raster_layer_test)
+    
+    # Set output directory 
+    Results.dir1 <- paste0(resga_result_dir,"/MS_optim/layers_out/", best_layer_name,".",test_layer_name,"/Run_1/")
+    if (!dir.exists(Results.dir1)) {dir.create(Results.dir1, recursive = TRUE)}
+    Results.dir2 <- paste0(resga_result_dir,"/MS_optim/layers_out/", best_layer_name,".",test_layer_name,"/Run_2/")
+    if (!dir.exists(Results.dir2)) {dir.create(Results.dir2, recursive = TRUE)}
+    
+    
+    # Set variables for GA optim and run optimisation
+    GA.inputs_1 <- GA.prep(ASCII.dir = r.stack, 
+                           Results.dir = Results.dir1,
+                           parallel = 3,
+                           seed = 1111,
+                           cat.levels = 21,
+                           max.cat = 1000, 
+                           max.cont = 1000,
+                           select.trans = trans_list)
+    run1_MSoptim <-MS_optim(jl.inputs = jl.inputs, GA.inputs = GA.inputs_1)
+    cat(paste0(layer, " run 1 complete\n"))
+    
+    GA.inputs_2 <- GA.prep(ASCII.dir = r.stack, 
+                           Results.dir = Results.dir2,
+                           parallel = 3,
+                           seed = 2222,
+                           cat.levels = 21,
+                           max.cat = 1000, 
+                           max.cont = 1000,
+                           select.trans = trans_list)
+    run2_MSoptim <- MS_optim(jl.inputs = jl.inputs, GA.inputs = GA.inputs_2)
+    cat(paste0(layer, " run 2 complete\n"))
+    
+    
+    # Run bootstapping on replicate with lowest AICc
+    if (run1_MSoptim$AICc[,"AICc"] <= run2_MSoptim$AICc[,"AICc"]) {
+      best_run_A <- "1"
+      AIC.boot_A <- Resist.boot(mod.names = names(run1_MSoptim$cd), dist.mat= run1_MSoptim$cd, 
+                                n.parameters=run1_MSoptim$k[,2], sample.prop=0.75, iters=1000, 
+                                obs=length(sp.dat), genetic.mat=GD, rank.method = "AICc") 
+    } else {
+      best_run_A <- "2"
+      AIC.boot_A <- Resist.boot(mod.names = names(run2_MSoptim$cd), dist.mat= run2_MSoptim$cd, 
+                                n.parameters=run2_MSoptim$k[,2], sample.prop=0.75, iters=1000, 
+                                obs=length(sp.dat), genetic.mat=GD, rank.method = "AICc")
+    }
+    
+    # Output csv of bootstrapping results and create Bootstrapping directory
+    Bootstrapping.dir <- paste0(resga_result_dir,"/MS_optim/BOOTSTRAPPING/")
+    if (!dir.exists(Bootstrapping.dir)) {dir.create(Bootstrapping.dir, recursive = TRUE)}
+    AIC.boot_sorted <- cbind("surface" = AIC.boot_A$surface,"optim_run" = best_run_A,AIC.boot_A[,2:11])
+    write.csv(AIC.boot_sorted, file = paste0(Bootstrapping.dir,best_layer_name,".",test_layer_name,"_run",best_run_A,".csv"))
+    
+    # Add bootstrapping result from the best run to the overall MS_optim bootstrapping summary
+    bootstrapping_summary <- rbind(bootstrapping_summary, AIC.boot_sorted)
+    
+    # If combined AICc < layer_1 AICc keep combined layer, if not keep layer_1
+    if (AIC.boot_A$avg.AICc < BestAICc){
+      Raster_layer_best <- raster(paste0(resga_result_dir,"/MS_optim/layers_out/", best_layer_name,".",test_layer_name,
+                                         "/Run_",best_run_A,"/Results/",best_layer_name,".",test_layer_name,".asc"))
+      crs(Raster_layer_best) <- "+proj=longlat +datum=WGS84 +no_defs"
+      best_layer_name <- paste0(best_layer_name,".",test_layer_name)
+      BestAICc <- AIC.boot_A$avg.AICc
+    } else {
+      Raster_layer_best <- Raster_layer_best
+      BestAICc <- BestAICc
+    }
+    # Remove any variables not needed to save space
+    rm("GA.inputs_1","GA.inputs_2","run1_MSoptim","run2_MSoptim",
+       "Results.dir1","Results.dir2","Bootstrapping.dir",
+       "AIC.boot_A","best_run_A", "AIC.boot_sorted",
+       "trans_list","trans_best","trans_test","values_best","values_test",
+       "r.stack","test_layer_name","test_layer_run","Raster_layer_test")
+  }
+  
+  # Sort bootstrapping summary from lowest to highest AICc
+  bootstrapping_summary_sorted <- bootstrapping_summary[order(bootstrapping_summary$avg.AICc), ]
+  
+  # Output the bootstrapping summary
+  summary.dir <- paste0(resga_result_dir,"/MS_optim/Summary/")
+  if (!dir.exists(summary.dir)) {dir.create(summary.dir, recursive = TRUE)}
+  write.csv(bootstrapping_summary_sorted, file = paste0(summary.dir,"MS_optim_bootstapping_summary.csv"))
+  
+  # Output percentage contribution summaries for the best run of each layer
+  MS_optim_layers <- c(bootstrapping_summary$surface) # Get list of layers
+  MS_optim_percent_contribution <- data.frame() # Create blank data.frame for output
+  
+  for (layer in MS_optim_layers[2:length(MS_optim_layers)]){
+    run <- bootstrapping_summary[bootstrapping_summary$surface == layer, "optim_run"]
+    percent_contribution <- read.csv(paste0(resga_result_dir,"/MS_optim/layers_out/",layer,"/Run_",run,"/Results/Percent_Contribution.csv"))
+    MS_optim_percent_contribution <- rbind(MS_optim_percent_contribution, "", percent_contribution)
+  }
+  write.csv(MS_optim_percent_contribution, file = paste0(summary.dir,"MS_optim_percentage_summary.csv"))
+  
+  
+  # Copy the bootstrapped results and raster from the best run to a folder called Top_model
+  top_model.dir <- paste0(resga_result_dir,"/MS_optim/Top_model/")
+  if (!dir.exists(top_model.dir)) {dir.create(top_model.dir, recursive = TRUE)}
+  best_model_name <- bootstrapping_summary_sorted[1,"surface"]
+  best_model_run <- bootstrapping_summary_sorted[1,"optim_run"]
+  best_model_bootstrapping <- data.frame(bootstrapping_summary_sorted[1,])
+  write.csv(best_model_bootstrapping, paste0(top_model.dir, best_model_name,"_bootstrapping.csv"))
+  best_model_raster <- writeRaster(Raster_layer_best, filename = paste0(top_model.dir,"",best_model_name,".tif"), format="GTiff", overwrite=TRUE)
+}
+
+```
+
+```{r Multi-surface bootstrapping (no HS)}
+
+### MS_optim bootstrapping summary with optimised multi-surface layers
+setwd(paste0(resga_result_dir,"/MS_optim/layers_out/"))
+
+# Total number of observations = number of samples in GD matrix
+obs <- nrow(GD)
+
+# Load optimised multi-surface layers for best run (taken from MS_optim output)
+VE <- as.matrix(read.csv(paste0(resga_result_dir,"/SS_optim/VE/Run_1/Results/VE_jlResistMat.csv"), header = F))
+VE.WE <- as.matrix(read.csv("VE.WE/Run_1/Results/VE.WE_jlResistMat.csv", header = F))
+VE.DE <- as.matrix(read.csv("VE.DE/Run_2/Results/VE.DE_jlResistMat.csv", header = F))
+VE.CC <- as.matrix(read.csv("VE.CC/Run_2/Results/VE.CC_jlResistMat.csv", header = F))
+VE.WB <- as.matrix(read.csv("VE.WB/Run_2/Results/VE.WB_jlResistMat.csv", header = F))
+VE.CH <- as.matrix(read.csv("VE.CH/Run_1/Results/VE.CH_jlResistMat.csv", header = F))
+VE.DB <- as.matrix(read.csv("VE.DB/Run_2/Results/VE.DB_jlResistMat.csv", header = F))
+
+# Load distance matrix
+Distance <- as.matrix(read.csv(paste0(resga_result_dir,"/SS_optim/VE/Run_1/Results/Distance_jlResistMat.csv"), header = F))
+
+# Make a list of matrices
+resist_mats <- list("VE" = VE,
+                    "VE.WE" = VE.WE,
+                    "VE.DE" = VE.DE,
+                    "VE.CC" = VE.CC,
+                    "VE.WB" = VE.WB,
+                    "VE.CH" = VE.CH,
+                    "VE.DB" = VE.DB,
+                    "Distance" = Distance)
+
+# Rename resistance matrices
+for (name in names(resist_mats)){
+  colnames(resist_mats[[name]]) <- NULL
+}
+
+# Set model names
+mod.names <- names(resist_mats)
+
+# Set number of parameters for each resistance matrix (taken from MS_optim output - see k column in MS_Optim bootstrapping summary output)
+n.parameters <- c(8,11,11,14,11,13,11,2)
+
+# Run bootstrapping
+AIC.boot <- Resist.boot(mod.names = mod.names, dist.mat = resist_mats, 
+                        n.parameters = n.parameters, sample.prop = 0.75, iters = 1000, 
+                        obs = obs, genetic.mat = GD, rank.method = "AICc") 
+
+# Save output
+write.csv(AIC.boot, file = paste0(resga_result_dir,"/MS_optim/BOOTSTRAPPING/MS.optim_bootstrapping_final.csv"))
+
+
+```
+
+```{r Multi-surface bootstrapping (no VE)}
+
+### MS_optim bootstrapping summary with optimised multi-surface layers
+setwd(paste0(resga_result_dir,"/MS_optim/layers_out/"))
+
+# Total number of observations = number of samples in GD matrix
+obs <- nrow(GD)
+
+# Load optimised multi-surface layers for best run (taken from MS_optim output)
+HS <- as.matrix(read.csv(paste0(resga_result_dir,"/SS_optim/HS/Run_1/Results/HS_jlResistMat.csv"), header = F)) # Use if a single layer is one of the top scoring models
+HS.CC <- as.matrix(read.csv("HS.CC/Run_2/Results/HS.CC_jlResistMat.csv", header = F))
+HS.WB.CH <- as.matrix(read.csv("HS.WB.CH/Run_2/Results/HS.WB.CH_jlResistMat.csv", header = F))
+HS.WB.DB <- as.matrix(read.csv("HS.WB.DB/Run_1/Results/HS.WB.DB_jlResistMat.csv", header = F))
+HS.WB.DE <- as.matrix(read.csv("HS.WB.DE/Run_1/Results/HS.WB.DE_jlResistMat.csv", header = F))
+HS.WB.WE <- as.matrix(read.csv("HS.WB.WE/Run_1/Results/HS.WB.WE_jlResistMat.csv", header = F))
+HS.WB <- as.matrix(read.csv("HS.WB/Run_1/Results/HS.WB_jlResistMat.csv", header = F))
+
+# Load distance matrix
+Distance <- as.matrix(read.csv(paste0(resga_result_dir,"/SS_optim/HS/Run_1/Results/Distance_jlResistMat.csv"), header = F))
+
+# Make a list of matrices
+resist_mats <- list("HS.WB" = HS.WB,
+                    "HS.WB.WE" = HS.WB.WE,
+                    "HS.WB.DB" = HS.WB.DB,
+                    "HS.WB.DE" = HS.WB.DE,
+                    "HS" = HS,
+                    "HS.CC" = HS.CC,
+                    "HS.WB.CH" = HS.WB.CH,
+                    "Distance" = Distance)
+
+# Rename resistance matrices
+for (name in names(resist_mats)){
+  colnames(resist_mats[[name]]) <- NULL
+}
+
+# Set model names
+mod.names <- names(resist_mats)
+
+# Set number of parameters for each resistance matrix (taken from MS_optim output - see k column in MS_Optim bootstrapping summary output)
+n.parameters <- c(6,7,7,7,3,9,9,2)
+
+# Run bootstrapping
+AIC.boot <- Resist.boot(mod.names = mod.names, dist.mat = resist_mats, 
+                        n.parameters = n.parameters, sample.prop = 0.75, iters = 1000, 
+                        obs = obs, genetic.mat = GD, rank.method = "AICc") 
+
+# Save output
+write.csv(AIC.boot, file = paste0(resga_result_dir,"/MS_optim/BOOTSTRAPPING/MS.optim_bootstrapping_final.csv"))
+
+
+```
+
+```{r Current maps}
+
+# Single current map for best multi-surface model (if a multi-surface model was identified as top model, otherwise use the single surface Top_model result)
+rast <- raster(paste0(resga_result_dir,"/MS_optim/Top_model/HS.WB.tif"))
+plot(rast)
+
+Run_CS.jl(jl.inputs = NULL, 
+          r = rast, 
+          CS_Point.File = sp.dat, 
+          CurrentMap = TRUE,
+          EXPORT.dir = paste0(resga_result_dir,"/MS_optim/Top_model/"), 
+          output = "raster",
+          parallel = TRUE,
+          cores = 3,
+          cholmod = T, 
+          JULIA_HOME = JULIA_HOME)
+
+
+
+# Multiple current maps for optimised single surface features
+# Create a list of all optimised landscape resistance matrices.
+all_layers <- c("HS")
+
+# Make a list of the best run for each layer
+best_run.df <- data.frame()
+
+for (layer in all_layers){
+  layer_name <- layer
+  run1 <- read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_1/Results/All_Results_Table.csv"))
+  run1_AICc <- run1[run1$Surface == layer_name,"AICc"]
+  run1_k <- run1[run1$Surface == layer_name,"k"]
+  run2 <- read.csv(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_2/Results/All_Results_Table.csv"))
+  run2_AICc <- run2[run2$Surface == layer_name,"AICc"]
+  run2_k <- run2[run2$Surface == layer_name,"k"]
+  
+  if (run1_AICc <= run2_AICc){
+    df <- data.frame("Layer" = layer, "Run" = 1, "k" = run1_k)
+    best_run.df <- rbind(best_run.df, df)
+  } else {
+    df <- data.frame("Layer" = layer, "Run" = 2, "k" = run2_k)
+    best_run.df <- rbind(best_run.df, df)
+  }
+  rm("layer_name","run1","run1_AICc","run2","run2_AICc","df")
+}
+
+# Create current maps for each layer using the optimised single-surface from the best run.
+for (layer in all_layers){
+
+  run <- best_run.df[best_run.df$Layer == layer, "Run"]
+  rast <- raster(paste0(resga_result_dir,"/SS_optim/", layer, "/Run_", run, "/Results/", layer, ".asc"))
+  names(rast) <- layer
+  
+  
+  # Set output directory
+  Out.dir <- paste0(resga_result_dir,"/Current_maps/",layer,"/")
+  if (!dir.exists(Out.dir)) {dir.create(Out.dir, recursive = TRUE)}
+  
+  Run_CS.jl(jl.inputs = NULL, 
+            r = rast, 
+            CS_Point.File = sp.dat, 
+            CurrentMap = TRUE,
+            EXPORT.dir = Out.dir, 
+            output = "raster",
+            parallel = TRUE,
+            cores = 3,
+            cholmod = T, 
+            JULIA_HOME = JULIA_HOME)
+  
+  cat(paste0(layer, " complete\n"))
+  rm("rast", "Out.dir")
+}
+
+```

@@ -1,0 +1,376 @@
+---
+title: "4-demography"
+author: "Skye Davis"
+date: "2026-06-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up
+
+```{r Packages}
+
+# Data manipulation & LDNe
+library(dartR) # v2.9.7
+library(dplyr) # v1.1.4
+
+# Plotting
+library(ggplot2) # v3.5.1
+library(ggpubr) # v0.6.0
+
+# Other attached packages
+library(adegenet) # v2.1.10
+library(ade4) #v1.7-22
+
+```
+
+```{r Directories}
+
+# Main directory for data
+data_dir <- paste0(getwd(),"/data")
+
+# Input data directory for this script
+input_data_dir <- paste0(data_dir,"/kinship-data")
+
+# Results directories for this script
+
+ne_result_dir <- paste0(getwd(),"/results/4-demography/4.1-LDNe")
+dir.create(paste0(ne_result_dir,"/_PLOTS"), recursive = TRUE)
+
+stairway_result_dir <- paste0(getwd(),"/results/4-demography/4.2-stairway-plot")
+dir.create(paste0(stairway_result_dir,"/_PLOTS"), recursive = TRUE)
+
+
+```
+
+# Analysis
+
+## 4.1 Contemporay Ne (LDNe)
+
+```{r LDNe}
+
+### SET UP
+
+# For gl.LDNe to run, download Neestimator2 from http://www.molecularfisherieslaboratory.com.au/neestimator-software/ and make sure the appropriate executable Ne2-1 is available in the path as specified in the function.
+neest.path <- "path/to/NeEstimator-2.1"
+
+# Load unrelated data
+setwd(input_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+
+# RUN LDNe
+
+# Ne by region
+Ne_result <- gl.LDNe(data, outfile = "LDNe_result_by_region.txt", outpath = ne_result_dir, neest.path = neest.path, critical = c(0,0.01,0.02,0.03,0.04,0.05),  singleton.rm = FALSE, mating = "random", plot.out = TRUE, save2tmp = FALSE, verbose = NULL)
+
+# Decide how to delineate pops for Ne (Ne assumes panmixia, no migration, mutation, selection etc)
+data2 <- gl.merge.pop(data,old = c("Central","North","South"),new = "AllPop")
+
+# critical sets the P-crit (MAF) thresholds, default is 0, use c(0,0.01 etc) to specify multiple to test.
+Ne_result <- gl.LDNe(data2, outfile = "LDNe_result_1pop.txt", outpath = ne_result_dir, neest.path = neest.path, critical = c(0,0.01,0.02,0.03,0.04,0.05),  singleton.rm = FALSE, mating = "random", plot.out = TRUE, save2tmp = FALSE, verbose = NULL)
+
+# Alternate groupings
+data2 <- gl.merge.pop(data,old = c("Central","North"),new = "Central-North")
+Ne_result <- gl.LDNe(data2, outfile = "LDNe_result_NC_vs_S.txt", outpath = ne_result_dir, neest.path = neest.path, critical = c(0,0.01,0.02,0.03,0.04,0.05),  singleton.rm = FALSE, mating = "random", plot.out = TRUE, save2tmp = FALSE, verbose = NULL)
+
+# Alternate groupings (similar sample sizes)
+data2 <- gl.merge.pop(data,old = c("Central","North"),new = "Central-North")
+NC_samples_retain <- c("C_BTF11","C_BTF40","C_BTF26","C_NOV81","C_BTF14","C_NOV89","C_BTF62","C_NOV65","C_NOV90","C_NOV79","N_NOV09","N_NOV25","N_NOV27","N_NOV15","N_NOV32","N_NOV19","N_NOV21","N_NOV22","N_NOV23","N_NOV28")
+S_samples_retain <- data2@other$ind.metrics$id[data2@other$ind.metrics$pop == "South"]
+data3 <- gl.keep.ind(data2, ind.list = c(NC_samples_retain, S_samples_retain), recalc = TRUE, mono.rm = TRUE)
+Ne_result <- gl.LDNe(data3, outfile = "LDNe_result_NC_vs_S_n20.txt", outpath = ne_result_dir, neest.path = neest.path, critical = c(0,0.01,0.02,0.03,0.04,0.05),  singleton.rm = FALSE, mating = "random", plot.out = TRUE, save2tmp = FALSE, verbose = NULL)
+
+# BOOTSTRAPPING FOR SMALL SAMPLE SIZES
+
+setwd(ne_result_dir)
+dir.create("BS")
+ne_result_dir_bs <- paste(ne_result_dir,"/BS",sep = "")
+
+for (run in c(1:100)) {
+  run_name <- paste0("Run_",run)
+  # Generate the subsampled dataset
+  S_pop <- gl.keep.pop(data,pop.list = "South", mono.rm = FALSE)
+  NC_pop <- gl.drop.pop(data,pop.list = "South", mono.rm = FALSE)
+  # Grab a random list of 20 individuals from North-Central
+  NC_pop_20ind <- sample(NC_pop@ind.names,20)
+  NC_pop_20ind
+  # Create the dataset for Ne inference
+  data_subset <- gl.keep.ind(data, ind.list = c(NC_pop_20ind, S_pop@ind.names),recalc = TRUE,mono.rm = TRUE)
+  # Merge North and Central
+  data_subset2 <- gl.merge.pop(data_subset,old = c("North","Central"),new = "North-Central")
+  # Ne by region
+  Ne_result <- gl.LDNe(data_subset2, outfile = paste0("LDNe_BS_",run_name,".txt"), outpath = ne_result_dir_bs, neest.path = neest.path, critical = 0.03,  singleton.rm = TRUE, mating = "random", plot.out = TRUE, save2tmp = FALSE, verbose = NULL)
+}
+
+```
+
+## 4.2 Plots for Stairway Plot & Dadi
+See main directory for the scripts used to generate these results
+
+```{r Stairway Plot - Extract summary results}
+
+# Set the name of your Stairway results (folder name)
+result <- "ALL_n60_final-g3"
+
+# Import the raw data (final.summary result)
+setwd(paste0(stairway_result_dir,"/",result))
+data <- read.table(paste0(result,".final.summary"),header = TRUE)
+data
+
+# Group every 10 years together and get average Ne - to simplify the table for examining results
+
+# Create bins for column 'year' by every 10 years
+data_10yr <- data %>%
+  dplyr::mutate(year_bin = cut(year, breaks = seq(0, max(year), by = 10), include.lowest = TRUE, right = FALSE))
+data_10yr
+
+# Summarize by the bins and calculate the average Ne per bin
+data_10yr <- data_10yr %>%
+  dplyr::group_by(year_bin) %>%
+  dplyr::summarise(Ne_avg = mean(Ne_median, na.rm = TRUE), Ne_lwr = mean(Ne_2.5., na.rm = TRUE), Ne_upr = mean(Ne_97.5., na.rm = TRUE))
+data_10yr
+
+setwd(stairway_result_dir)
+write.csv(data_10yr, file = paste0(result,"-10yr-bins.csv"))
+
+# Repeat for every 100 years
+data_100yr <- data %>%
+  dplyr::mutate(year_bin = cut(year, breaks = seq(0, max(year), by = 100), include.lowest = TRUE, right = FALSE))
+data_100yr <- data_100yr %>%
+  dplyr::group_by(year_bin) %>%
+  dplyr::summarise(Ne_avg = mean(Ne_median, na.rm = TRUE), Ne_lwr = mean(Ne_2.5., na.rm = TRUE), Ne_upr = mean(Ne_97.5., na.rm = TRUE))
+data_100yr
+
+setwd(stairway_result_dir)
+write.csv(data_100yr, file = paste0(result,"-100yr-bins.csv"))
+
+# Calculate % bottleneck since 1000 years ago
+BN_perc_1000 <- 100-(data_100yr$Ne_avg[data_100yr$year_bin == "[0,100)"]/data_100yr$Ne_avg[data_100yr$year_bin == "[900,1000)"]*100)
+BN_perc_1000 <- BN_perc_1000[1]
+BN_perc_1000 ### Bottleneck of 93.08 % over last 1000 years.
+
+# Calculate % bottleneck since 200 years ago
+BN_perc_200 <- 100-(data_100yr$Ne_avg[data_100yr$year_bin == "[0,100)"]/data_100yr$Ne_avg[data_100yr$year_bin == "[100,200)"]*100)
+BN_perc_200 <- BN_perc_200[1]
+BN_perc_200 ### Bottleneck of 47.59 % over last 200 years.
+
+# Calculate the expansion occurring between 10000 and 1 million years ago (you might need to modify this to suit your results)
+EX_perc <- (data_100yr$Ne_avg[data_100yr$year_bin == "[1e+05,1.001e+05)"]/data_100yr$Ne_avg[length(data_100yr$Ne_avg)]*100)
+EX_perc <- EX_perc[1] # 224 % increase
+EX_perc
+
+# Save summary stats
+setwd(stairway_result_dir)
+sink(file = paste0(result,"-summary-stats.txt"))
+cat("% bottleneck since 1000 years ago\n")
+cat(BN_perc_1000)
+cat("\n")
+cat("% bottleneck since 200 years ago\n")
+cat(BN_perc_200)
+cat("\n")
+cat("% increase between 100K and 1M years ago\n")
+cat(EX_perc)
+sink()
+
+```
+
+```{r Plot Stairway with dadi - gen length 2 years}
+
+# Stairway plot
+
+# Set the name of the Stairway results (folder and file name)
+result <- "ALL_n60_final"
+name <- "uG1"
+
+# Import raw Stairway data
+setwd(paste0(stairway_result_dir,"/",result))
+data <- read.table(paste0(result,".final.summary"),header = TRUE)
+
+# Full Stairway plot
+A <- ggplot(data, aes(x = year, y = Ne_median)) +
+  geom_line() +
+  #scale_x_continuous(limits = c(0,1000000))+
+  #scale_y_continuous(limits = c(0,480000))+
+  labs(y = "Ne")+
+  # 95% C.I.
+  geom_ribbon(aes(ymin = Ne_2.5., ymax = Ne_97.5.), alpha = 0.1, fill = "grey40") +
+  geom_line(aes(y = Ne_2.5.), linetype = "dashed", color = "grey40") +
+  geom_line(aes(y = Ne_97.5.), linetype = "dashed", color = "grey40")+
+  # 75% C.I.
+  geom_ribbon(aes(ymin = Ne_12.5., ymax = Ne_87.5.), alpha = 0.1, fill = "grey30") +
+  geom_line(aes(y = Ne_12.5.), linetype = "dashed", color = "grey30") +
+  geom_line(aes(y = Ne_87.5.), linetype = "dashed", color = "grey30") +
+  scale_x_continuous(
+    name = "Thousand years before present",
+    labels = function(x) x / 1000)
+A
+
+# Close up of last 1,000 years
+B <- ggplot(data, aes(x = year, y = Ne_median)) +
+  geom_line() +
+  scale_x_continuous(limits = c(0,1000))+
+  scale_y_continuous(limits = c(0,220000))+
+  labs(x = "Years before present",y = "Ne")+
+  # 95% C.I.
+  geom_ribbon(aes(ymin = Ne_2.5., ymax = Ne_97.5.), alpha = 0.1, fill = "grey40") +
+  geom_line(aes(y = Ne_2.5.), linetype = "dashed", color = "grey40") +
+  geom_line(aes(y = Ne_97.5.), linetype = "dashed", color = "grey40")+
+  # 75% C.I.
+  geom_ribbon(aes(ymin = Ne_12.5., ymax = Ne_87.5.), alpha = 0.1, fill = "grey30") +
+  geom_line(aes(y = Ne_12.5.), linetype = "dashed", color = "grey30") +
+  geom_line(aes(y = Ne_87.5.), linetype = "dashed", color = "grey30")
+B
+
+
+# Dadi results
+
+# For the best-fit dadi model, with parameters converted to Ne and time in years, plot those on the Stairway plot
+
+# Coordinates for dadi
+dadi_data <- data.frame(
+  x = c(0,59, 59,321081+59, max(data$year)),
+  y = c(918,918,167700,80354,80354)
+)
+
+# Coordinates for dadi without the last line (back to furthest stairway year)
+dadi_data <- data.frame(
+  x = c(0,59, 59,321081+59),
+  y = c(918,918,167700,80354)
+)
+
+# Add step plot to your existing plot
+A2 <- A + 
+  geom_step(data = dadi_data, aes(x = x, y = y), color = "orange2", size = 1)
+
+A2
+
+# Close up plot 1000 years
+
+dadi_data <- data.frame(
+  x = c(0, 59, 59,1000),
+  y = c(918,918,167700,167700)
+)
+
+B2 <- B + 
+  geom_step(data = dadi_data, aes(x = x, y = y), color = "orange2", size = 1)
+
+B2
+
+# Save plot for publication
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.position = "none") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8, angle = 45, hjust = 1), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6))
+
+A2 <- A2 + plot_margin + plot_theme + text_size
+B2 <- B2 + plot_margin + plot_theme + text_size
+
+setwd(paste0(stairway_result_dir,"/_PLOTS"))
+tiff("Stairway-plots-muG1-ALL-n60-with-DADI-g2.tif",width = 17.5, height = 8, unit='cm', res=300)
+ggarrange(A2,B2,
+          labels = c("A","B"),
+          ncol = 2, nrow = 1)
+dev.off()
+
+```
+
+```{r Plot Stairway with dadi - gen length 3.5 years}
+
+# Stairway results
+
+# Set the name of the Stairway results (folder and file name)
+result <- "ALL_n60_final-g3"
+name <- "uG1"
+
+# Import raw Stairway data
+setwd(paste0(stairway_result_dir,"/",result))
+data <- read.table(paste0(result,".final.summary"),header = TRUE)
+data
+
+# Full Stairway plot
+A <- ggplot(data, aes(x = year, y = Ne_median)) +
+  geom_line() +
+  #scale_x_continuous(limits = c(0,1000000))+
+  #scale_y_continuous(limits = c(0,480000))+
+  labs(x = "Years ago",y = "Ne")+
+  # 95% C.I.
+  geom_ribbon(aes(ymin = Ne_2.5., ymax = Ne_97.5.), alpha = 0.1, fill = "grey40") +
+  geom_line(aes(y = Ne_2.5.), linetype = "dashed", color = "grey40") +
+  geom_line(aes(y = Ne_97.5.), linetype = "dashed", color = "grey40")+
+  # 75% C.I.
+  geom_ribbon(aes(ymin = Ne_12.5., ymax = Ne_87.5.), alpha = 0.1, fill = "grey30") +
+  geom_line(aes(y = Ne_12.5.), linetype = "dashed", color = "grey30") +
+  geom_line(aes(y = Ne_87.5.), linetype = "dashed", color = "grey30")
+A
+
+# Close up of last 1,000 years
+B <- ggplot(data, aes(x = year, y = Ne_median)) +
+  geom_line() +
+  scale_x_continuous(limits = c(0,1000))+
+  scale_y_continuous(limits = c(0,220000))+
+  labs(x = "Years ago",y = "Ne")+
+  # 95% C.I.
+  geom_ribbon(aes(ymin = Ne_2.5., ymax = Ne_97.5.), alpha = 0.1, fill = "grey40") +
+  geom_line(aes(y = Ne_2.5.), linetype = "dashed", color = "grey40") +
+  geom_line(aes(y = Ne_97.5.), linetype = "dashed", color = "grey40")+
+  # 75% C.I.
+  geom_ribbon(aes(ymin = Ne_12.5., ymax = Ne_87.5.), alpha = 0.1, fill = "grey30") +
+  geom_line(aes(y = Ne_12.5.), linetype = "dashed", color = "grey30") +
+  geom_line(aes(y = Ne_87.5.), linetype = "dashed", color = "grey30")
+B
+
+
+# Dadi results
+
+# For the best-fit dadi model, with parameters converted to Ne and time in years, plot those on the Stairway plot
+
+# Coordinates for dadi
+dadi_data <- data.frame(
+  x = c(0,59, 59,321081+59, max(data$year)),
+  y = c(918,918,167700,80354,80354)
+)
+
+# Coordinates for dadi without the last line (back to furthest stairway year)
+dadi_data <- data.frame(
+  x = c(0,103, 103,561892+103),
+  y = c(918,918,167700,80354)
+)
+
+# Add step plot to your existing plot
+A2 <- A + 
+  geom_step(data = dadi_data, aes(x = x, y = y), color = "orange2", size = 1)
+
+A2
+
+# Close up plot 1000 years
+
+dadi_data <- data.frame(
+  x = c(0,103, 103,1000),
+  y = c(918,918,167700,167700)
+)
+
+B2 <- B + 
+  geom_step(data = dadi_data, aes(x = x, y = y), color = "orange2", size = 1)
+
+B2
+
+# Save plot for publication
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.position = "none") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8, angle = 45, hjust = 1), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6))
+
+A2 <- A2 + plot_margin + plot_theme + text_size
+B2 <- B2 + plot_margin + plot_theme + text_size
+
+setwd(paste0(stairway_result_dir,"/_PLOTS"))
+tiff("Stairway-plots-muG1-ALL-n60-with-DADI-g3.5.tif",width = 17.5, height = 8, unit='cm', res=300)
+ggarrange(A2,B2,
+          labels = c("A","B"),
+          ncol = 2, nrow = 1)
+dev.off()
+
+```

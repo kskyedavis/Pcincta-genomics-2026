@@ -1,0 +1,2990 @@
+---
+title: "3-kinship-structure"
+author: "Skye Davis"
+date: "2026-06-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Set up
+
+```{r Packages}
+
+# Data manipulation
+library(dartR) # v2.9.7
+library(dplyr) # v1.1.4
+
+# Kinship
+library(SNPRelate) # v1.30.1
+library(gdsfmt) # v1.32.0
+library(GENESIS) # v2.26.0
+library(GGally) # v2.2.1
+library(GWASTools) # v1.42.1
+library(plotrix) # v3.8-4
+
+# Structure & Stats
+library(hierfstat) # v0.5-11
+library(diveRsity) # v1.9.90
+library(LEA) # v3.8.0
+library(geosphere) # v1.5-18
+
+# Plotting
+library(ggplot2) # v3.5.1
+library(ggpubr) # v0.6.0
+
+# Other attached packages
+library(adegenet) # v2.1.10
+library(ade4) # v1.7-22
+
+```
+
+```{r Directories}
+
+# Main directory for data
+data_dir <- paste0(getwd(),"/data")
+
+# Input data directory for this script
+input_data_dir <- paste0(data_dir,"/sex-data")
+
+# Output data directory for this script (where final unrelated vs related genlight objects will be stored)
+output_data_dir <- paste0(data_dir,"/kinship-data")
+dir.create(output_data_dir, recursive = TRUE)
+
+# Results directories for this script
+
+pcairelate_result_dir <- paste0(getwd(),"/results/3-kinship-structure/3.1-pcair-pcrelate")
+dir.create(paste0(pcairelate_result_dir,"/_PLOTS"), recursive = TRUE)
+
+pcoa_result_dir <- paste0(getwd(),"/results/3-kinship-structure/3.2-PCOA")
+dir.create(paste0(pcoa_result_dir,"/_PLOTS"), recursive = TRUE)
+
+dapc_result_dir <- paste0(getwd(),"/results/3-kinship-structure/3.3-DAPC")
+dir.create(paste0(dapc_result_dir,"/_PLOTS"), recursive = TRUE)
+
+lea_result_dir <- paste0(getwd(),"/results/3-kinship-structure/3.4-LEA")
+dir.create(paste0(lea_result_dir,"/_PLOTS"), recursive = TRUE)
+
+struc_result_dir <- paste0(getwd(),"/results/3-kinship-structure/3.5-STRUCTURE")
+dir.create(paste0(struc_result_dir,"/_PLOTS"), recursive = TRUE)
+
+stats_result_dir <- paste0(getwd(),"/results/3-kinship-structure/3.6-Stats")
+dir.create(paste0(stats_result_dir,"/_PLOTS"), recursive = TRUE)
+
+saa_result_dir <- paste0(getwd(),"/results/3-kinship-structure/3.7-SAA")
+dir.create(paste0(saa_result_dir,"/_PLOTS"), recursive = TRUE)
+
+spca_result_dir <- paste0(getwd(),"/results/3-kinship-structure/3.8-sPCA")
+dir.create(paste0(spca_result_dir,"/_PLOTS"), recursive = TRUE)
+
+sexbias_result_dir <- paste0(getwd(),"/results/3-kinship-structure/3.9-sex-bias")
+dir.create(paste0(sexbias_result_dir,"/_PLOTS"), recursive = TRUE)
+
+kinship_result_dir <- paste0(getwd(),"/results/3-kinship-structure/3.10-kinship")
+dir.create(paste0(kinship_result_dir,"/_PLOTS"), recursive = TRUE)
+
+```
+
+# Analysis
+
+## 3.1 PCAiR & PCRelate - Identify close relatives
+
+```{r Create input files}
+
+# Load the filtered SNP data with sex info
+setwd(input_data_dir)
+data <- readRDS("BTF-3-155-14808-neutral-auto-genlight-sexinfo.RData")
+
+# Create gds
+data2 <- gi2gl(gl2gi(data))
+gl2gds(data2, outfile="BTF-3-155-14808-neutral-auto-genlight-sexinfo.gds", outpath = input_data_dir)
+
+# For the PC-AiR analysis, build a population dataframe in the format of an AnnotatedDataFrame.
+popInfo <- data@other$ind.metrics %>% select(c(id,pop))
+colnames(popInfo) <- c("sample.id","Population")
+rownames(popInfo) <- NULL
+setwd(output_data_dir)
+saveRDS(popInfo, file = "PC-AiR-popInfo.RData")
+
+```
+
+```{r Run PC-AiR and PCRelate}
+
+# Load input files
+setwd(input_data_dir)
+data <- readRDS("BTF-3-155-14808-neutral-auto-genlight-sexinfo.RData")
+setwd(input_data_dir)
+Snp_gds <- snpgdsOpen("BTF-3-155-14808-neutral-auto-genlight-sexinfo.gds")
+setwd(output_data_dir)
+popInfo <- readRDS("PC-AiR-popInfo.RData")
+
+# Basic ggplot theme settings
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.spacing.y = unit(0.01, "cm"),legend.key = element_rect(fill = "transparent")) 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=8), legend.title = element_text(size=8,face="bold"))
+
+# Pop colours for plots
+pop_cols <- c("North" = "#ff5f00", "Central" = "#dd217d", "South" = "#725def")
+
+### 1. KING COEFFICIENTS
+
+# Calculate KING kinship coefficients
+king <- snpgdsIBDKING(Snp_gds, autosome.only = FALSE)
+kingMat <- king$kinship
+colnames(kingMat) <- rownames(kingMat) <- king$sample.id
+kinship <- snpgdsIBDSelection(king)
+
+# Save plot of kinship vs IBSO
+setwd(paste0(pcairelate_result_dir,"/_PLOTS"))
+jpeg("PCAiRelate-Step-1-KING-kinship-coeffs-v2.jpg")
+ggplot(kinship, aes(IBS0, kinship)) +
+    geom_hline(yintercept=2^(-seq(3,9,2)/2), linetype="dashed", color="grey") +
+    geom_point(alpha=0.5) +
+    ylab("Kinship estimate") +
+    theme_bw()
+dev.off()
+
+
+### 2. STANDARD PCA & PLOTS A-B
+
+# Run PCA
+std_pca <- snpgdsPCA(Snp_gds, autosome.only = FALSE) # include all chroms (no sex chroms present anyways)
+
+# variance proportion (%) (prop variance explained by each PC)
+pc.percent <- std_pca$varprop*100
+head(round(pc.percent, 2))
+
+# Make a data.frame of sample id, pop and PC scores
+tab <- data.frame(sample.id = std_pca$sample.id,
+    pop = factor(popInfo$Population),
+    PC1 = std_pca$eigenvect[,1],    # the first eigenvector
+    PC2 = std_pca$eigenvect[,2],
+    PC3 = std_pca$eigenvect[,3],
+    PC4 = std_pca$eigenvect[,4],
+    PC5 = std_pca$eigenvect[,5],
+    PC6 = std_pca$eigenvect[,6],
+    PC7 = std_pca$eigenvect[,7],
+    PC8 = std_pca$eigenvect[,8],
+    PC9 = std_pca$eigenvect[,9],
+    PC10 = std_pca$eigenvect[,10],
+    stringsAsFactors = FALSE)
+tab
+
+# Order of pop names
+mypoporder <- c("North","Central","South")
+tab$pop <- factor(tab$pop, levels = mypoporder)
+
+# Basic Plot (PC1 vs PC2)
+A <- ggplot(tab, aes(PC1, PC2, color=pop)) +
+    geom_point(size=1) +
+    stat_ellipse(geom = "path", aes(group = pop)) +
+    labs(x = paste("PC1 (", round(pc.percent[1], digits = 2), "%)", sep = ""), 
+       y = paste("PC2 (", round(pc.percent[2], digits = 2), "%)", sep = ""), 
+       color = "Region") +  
+    scale_color_manual(values=pop_cols)+
+    ggtitle(label="Standard PCA")+
+    guides(color = guide_legend(override.aes = list(linetype = "blank")))
+A
+
+# Parallel Coordinates Plot (All PC's)
+B <- ggparcoord(tab, columns=3:12, groupColumn="pop", scale="uniminmax") +
+    scale_color_manual(values=pop_cols)+
+    ggtitle(label="")+
+    scale_x_discrete(labels=c("PC1" = "1", "PC2" = "2","PC3" = "3","PC4" = "4","PC5" = "5","PC6" = "6","PC7" = "7","PC8" = "8","PC9" = "9","PC10" = "10"))+
+    labs(x = "Principal component", y = "Individual scores", color = "Region")
+B
+
+A2 <- A + plot_margin + plot_theme + text_size
+B2 <- B + plot_margin + plot_theme + text_size + theme(legend.position = "none")
+
+# Save plots
+setwd(paste0(pcairelate_result_dir,"/_PLOTS"))
+tiff("PCAiRelate-Step-2-Standard-PCA.tif",width = 12, height = 12, unit='cm', res=300)
+ggarrange(A2,B2, ncol = 1, nrow = 2)
+dev.off()
+
+
+
+### 3. UNRELATED PCA & PROJECT RELATIVES
+
+# First, we partition the samples into a related and unrelated set. We use a kinship threshold of degree 3 (unrelated is less than first cousins). We load the GENESIS package. In the first iteration, we use the KING estimates for both kinship (kinMat) and ancestry divergence (divMat). KING kinship estimates are negative for samples with different ancestry. 
+# Thresholds of 0.025 (~ 2^(-11/2) are recommended for most cases, and should exclude all third and some fourth-degree relatives)
+
+sampset <- pcairPartition(kinobj=kingMat, kin.thresh=0.025,
+                          divobj=kingMat, div.thresh=-0.025)
+
+# Unrelated subset
+sampset$unrels
+# Related subset
+sampset$rels
+
+# Perform pca on the unrelated subset
+pca.unrel <- snpgdsPCA(Snp_gds, sample.id=sampset$unrels, autosome.only = FALSE)
+
+# Project values for relatives
+
+# snpgdsPCASNPLoadings = Calculate the SNP loadings (or SNP eigenvectors) from the principal component analysis conducted in snpgdsPCA.
+snp.load <- snpgdsPCASNPLoading(pca.unrel, gdsobj=Snp_gds)
+
+# snpgdsPCASampLoading = Calculate the sample eigenvectors using the specified SNP loadings – aka Project (related) individuals onto existing principal component axes (based on unrelated samples)
+samp.load <- snpgdsPCASampLoading(snp.load, gdsobj=Snp_gds, sample.id=sampset$rels)
+
+# combine unrelated and related PCs and order as in GDS file
+pcs <- rbind(pca.unrel$eigenvect, samp.load$eigenvect)
+rownames(pcs) <- c(pca.unrel$sample.id, samp.load$sample.id)
+samp.ord <- match(std_pca$sample.id, rownames(pcs))
+pcs <- pcs[samp.ord,]
+
+
+
+### 4. ANCESTRY INFORMATIVE PC'S & PLOT C
+
+# Next we need to determine which PCs are ancestry informative. To do this we need population information. This information is stored in an AnnotatedDataFrame, which is a data.frame with optional metadata describing the colunms (popInfo objected created earlier).
+
+# Make a parallel coordinates plot, color-coding by population.
+pc.df <- as.data.frame(pcs)
+names(pc.df) <- 1:ncol(pcs)
+pc.df$sample.id <- row.names(pcs)
+pc.df$pop <- popInfo$Population
+pc.df <- pc.df %>% select(sample.id,pop,everything())
+
+# Examine the plot - which PC's are ancestry informative? Which PC's describe the most structure now that close relatives are accounted for?
+C <- ggparcoord(pc.df, columns=3:12, groupColumn="pop", scale="uniminmax") +
+    scale_color_manual(values=pop_cols)+
+    ggtitle(label="Ancestry Informative PC's")+
+    scale_x_discrete(labels=c("PC1" = "1", "PC2" = "2","PC3" = "3","PC4" = "4","PC5" = "5","PC6" = "6","PC7" = "7","PC8" = "8","PC9" = "9","PC10" = "10"))+
+    labs(x = "Principal component", y = "Individual scores", color = "Region")
+C
+
+C2 <- C + plot_margin + plot_theme + text_size + theme(legend.position = "none")
+
+# Save plot
+setwd(paste0(pcairelate_result_dir,"/_PLOTS"))
+tiff("PCAiRelate-Step-4-Ancestry-informative-PCs.tif",width = 12, height = 12, unit='cm', res=300)
+ggarrange(B2,C2, ncol = 1, nrow = 2)
+dev.off()
+
+
+
+### 5. KINSHIP ACCOUNTING FOR ANCESTRY
+
+# The next step involves a different format of the same gds dataset, so we need to close the current one before opening it again.
+snpgdsClose(Snp_gds)
+
+# Create a GenotypeData class object (a SNPGDSFileClass object won't work in PC-Relate, but is required for SNPRelate, hence the change here - its the same data just in a different format stored in R)
+setwd(input_data_dir)
+Snp_gds <- GdsGenotypeReader("BTF-3-155-14808-neutral-auto-genlight-sexinfo.gds")
+Snp_gds <- GenotypeData(Snp_gds)
+
+# Run PC-Relate 
+
+# Set pcs=pcs[,n] where n = the PC's that described the most structure above, e.g. if the first two PC's described structure, use [,1:2] (after combining R and U PC's)
+genoData <- GenotypeBlockIterator(Snp_gds)
+mypcrelate <- pcrelate(genoData, pcs=pcs[,1:3], 
+                       training.set = sampset$unrels)
+
+mypcrelate_data <- mypcrelate$kinBtwn
+
+# Save plot of kinship vs IBSO. The intercepts for relatedness are: 0.35355339 0.17677670 0.08838835 0.04419417
+setwd(paste0(pcairelate_result_dir,"/_PLOTS"))
+jpeg("PCAiRelate-Step-5-Updated-kinship-coeffs.jpg")
+ggplot(mypcrelate_data, aes(k0, kin)) +
+    geom_hline(yintercept=2^(-seq(3,9,2)/2), linetype="dashed", color="grey") +
+    geom_point(alpha=0.5) +
+    xlab("k0")+
+    ylab("Kinship estimate") +
+    theme_bw()
+dev.off()
+
+
+
+### 6. ADJUST ANCESTRY USING KINSHIP & PLOTS D-E
+
+# Make a genetic relationship matrix (GRM)
+kin_matrix <- pcrelateToMatrix(mypcrelate, scaleKin = 2)
+
+# Run PC-AiR
+
+# Simultaneously partitions unrelated/related and runs the PCA, but uses the updated kinship estimates for the kinMat parameter (rather than the KING estimates used earlier which did not account for ancestry) 
+# Note threshold of 2^(-9/2) (~0.044) is equivalent to 3rd degree relatives, use 2^(-11/2) (~0.022) for fourth degree relatives as the cut-off for relatedness. Conomos et al. 2015 recomends 0.025 with dense SNP genotyping data which should identify third-degree (and some fourth-degree) relatives
+
+pca <- pcair(Snp_gds, kinobj=kin_matrix, kin.thresh=0.025, divobj=kingMat, div.thresh=-0.025, unrel.set = sampset$unrels,autosome.only = FALSE)
+
+# The default plot for a 'pcair' object is to plot PC values as black dots and blue pluses for individuals in the “unrelated subset” and “related subsets” respectively. vx and vy set the PC's to plot.
+plot(pca, vx=1, vy=2)
+plot(pca, vx=2, vy=3)
+
+# Extract % variance between pops explained by PC's
+pc.percent <- pca$varprop*100
+head(round(pc.percent, 2))
+
+# Prepare results for plotting
+# pcs_IT1 = iteration 1 (so it doesnt replace the pcs object created in Step 8)
+pcs_IT1 <- pca$vectors
+pc.df_IT1 <- as.data.frame(pcs_IT1)
+names(pc.df_IT1) <- paste0("PC", 1:ncol(pcs_IT1))
+pc.df_IT1$sample.id <- row.names(pcs_IT1)
+pc.df_IT1$pop <- popInfo$Population
+pc.df_IT1 <- pc.df_IT1 %>% select(sample.id,pop,everything())
+pc.df_IT1
+
+# Order of pop names
+mypoporder <- c("North","Central","South")
+pc.df_IT1$pop <- factor(pc.df_IT1$pop, levels = mypoporder)
+
+# Basic Plot (PC1 vs PC2)
+D <- ggplot(pc.df_IT1, aes(PC1, PC2, color=pop)) +
+    geom_point(size=1) +
+    stat_ellipse(geom = "path", aes(group = pop)) +
+    labs(x = paste("PC1 (", round(pc.percent[1], digits = 2), "%)", sep = ""), 
+       y = paste("PC2 (", round(pc.percent[2], digits = 2), "%)", sep = ""), 
+       color = "Region") +  
+    scale_color_manual(values=pop_cols)+
+    guides(color = guide_legend(override.aes = list(linetype = "blank")))
+D
+
+E <- ggplot(pc.df_IT1, aes(PC2, PC3, color=pop)) +
+    geom_point(size=1) +
+    stat_ellipse(geom = "path", aes(group = pop)) +
+    labs(x = paste("PC2 (", round(pc.percent[2], digits = 2), "%)", sep = ""), 
+       y = paste("PC3 (", round(pc.percent[3], digits = 2), "%)", sep = ""), 
+       color = "Region") +  
+    scale_color_manual(values=pop_cols)+
+    guides(color = guide_legend(override.aes = list(linetype = "blank")))
+E
+
+D2 <- D + plot_margin + plot_theme + text_size
+E2 <- E + plot_margin + plot_theme + text_size + theme(legend.position = "none")
+
+# Save plot
+setwd(paste0(pcairelate_result_dir,"/_PLOTS"))
+tiff("PCAiRelate-Step-6-Adjusted-PCA-Iteration1.tif",width = 10, height = 12, unit='cm', res=300)
+ggarrange(D2,E2, ncol = 1, nrow = 2)
+dev.off()
+
+
+
+### 7. REPEAT STEPS 5-6 & PLOTS F-G
+
+# Step 5 computed kinship accounting for ancestry and step 6 performed a PCA accounting for the kinship computed by Step 5. Generally a second iteration of these steps is required to ensure convergence. This final stage will comprise of:
+### Step 7a - compute kinship using updated ancestry from step 6
+### Step 7b - compute ancestry using updated kinship from step 11
+# We can check for convergence by correlating the top 5 PC's from each step of PC-AiR with eachother
+
+# Step 7a - update kinship using Step 6 PC's (pcs_IT1)
+mypcrelate_IT2 <- pcrelate(genoData, pcs=pcs_IT1[,1:2], 
+                       training.set = sampset$unrels)
+mypcrelate_IT2_data <- mypcrelate_IT2$kinBtwn
+
+# Step 7b - updated ancestry using Step 11's kinship
+kin_matrix_IT2 <- pcrelateToMatrix(mypcrelate_IT2, scaleKin = 2)
+
+pca_IT2 <- pcair(Snp_gds, kinobj=kin_matrix_IT2, kin.thresh=0.025, divobj=kingMat, div.thresh=-0.025, unrel.set = sampset$unrels,autosome.only = FALSE)
+
+plot(pca_IT2, vx=1, vy=2)
+plot(pca_IT2, vx=2, vy=3)
+
+# Variance explained
+pc.percent <- pca_IT2$varprop*100
+head(round(pc.percent, 2))
+
+pcs_IT2 <- pca$vectors
+pc.df_IT2 <- as.data.frame(pcs_IT2)
+names(pc.df_IT2) <- paste0("PC", 1:ncol(pcs_IT2))
+pc.df_IT2$sample.id <- row.names(pcs_IT2)
+pc.df_IT2$pop <- popInfo$Population
+pc.df_IT2 <- pc.df_IT2 %>% select(sample.id,pop,everything())
+
+# Order of pop names
+mypoporder <- c("North","Central","South")
+pc.df_IT2$pop <- factor(pc.df_IT2$pop, levels = mypoporder)
+
+# Basic Plot (PC1 vs PC2)
+F1 <- ggplot(pc.df_IT2, aes(PC1, PC2, color=pop)) +
+    geom_point(size=1) +
+    stat_ellipse(geom = "path", aes(group = pop)) +
+    labs(x = paste("PC1 (", round(pc.percent[1], digits = 2), "%)", sep = ""), 
+       y = paste("PC2 (", round(pc.percent[2], digits = 2), "%)", sep = ""), 
+       color = "Region") +  
+    scale_color_manual(values=pop_cols)+
+    guides(color = guide_legend(override.aes = list(linetype = "blank")))
+F1
+
+G <- ggplot(pc.df_IT2, aes(PC2, PC3, color=pop)) +
+    geom_point(size=1) +
+    stat_ellipse(geom = "path", aes(group = pop)) +
+    labs(x = paste("PC2 (", round(pc.percent[2], digits = 2), "%)", sep = ""), 
+       y = paste("PC3 (", round(pc.percent[3], digits = 2), "%)", sep = ""), 
+       color = "Region") +  
+    scale_color_manual(values=pop_cols)+
+    guides(color = guide_legend(override.aes = list(linetype = "blank")))
+G
+
+F2 <- F1 + plot_margin + plot_theme + text_size
+G2 <- G + plot_margin + plot_theme + text_size + theme(legend.position = "none")
+
+# Save plot
+setwd(paste0(pcairelate_result_dir,"/_PLOTS"))
+tiff("PCAiRelate-Step-7-Adjusted-PCA-Iteration2.tif",width = 10, height = 12, unit='cm', res=300)
+ggarrange(F2,G2, ncol = 1, nrow = 2)
+dev.off()
+
+
+
+### 8. COMPARISON OF ITERATIONS & PLOTS H-K
+
+# Typically 2 iterations of the process is sufficient (as performed above). It's important to visually and mathematically confirm convergence before settling on the results of the second iteration
+
+# Check correlation between PC's for iteration 1 and 2
+cor(pc.df_IT1$PC1, pc.df_IT2$PC1, method = c("pearson")) # corr = 1
+cor(pc.df_IT1$PC2, pc.df_IT2$PC2, method = c("pearson")) # corr = 1
+cor(pc.df_IT1$PC3, pc.df_IT2$PC3, method = c("pearson")) # corr = 1
+
+# Multi-plot comparing Iteration 1 and 2 - visually check convergence
+
+# Plot for Iteration 1 Kinship (object mypcrelate_data)
+H <- ggplot(mypcrelate_data, aes(k0, kin))+
+    geom_point(alpha=0.5) +
+    xlab("k0")+
+    ylab("Kinship estimate") +
+    ggtitle(label="Iteration 1 Kinship")+
+    theme_bw()
+H
+
+# Plot for Iteration 2 Kinship (object mypcrelate_IT2_data)
+I <- ggplot(mypcrelate_IT2_data, aes(k0, kin)) +
+    geom_point(alpha=0.5) +
+    xlab("k0")+
+    ylab("Kinship estimate") +
+    ggtitle(label="Iteration 2 Kinship")+
+    theme_bw()
+I
+
+# Plot for Iteration 1 PCA (object pc.df_IT1)
+J <- ggplot(pc.df_IT1, aes(PC1, PC2, color=pop)) +
+    geom_point(size=1) +
+    scale_color_manual(values=pop_cols)+
+    ggtitle(label="Iteration 1 PCA")+
+    theme_classic()
+J
+
+# Plot for Iteration 2 PCA (object pc.df_IT2)
+K <- ggplot(pc.df_IT2, aes(PC1, PC2, color=pop)) +
+    geom_point(size=1) +
+    scale_color_manual(values=pop_cols)+
+    ggtitle(label="Iteration 2 PCA")+
+    theme_classic()
+K
+
+# Save plots
+setwd(paste0(pcairelate_result_dir,"/_PLOTS"))
+tiff("PCAiRelate-Step-8-Iteration1v2.tif",width = 17, height = 12, unit='cm', res=300)
+ggarrange(H,I,J,K, ncol = 2, nrow = 2)
+dev.off()
+
+
+
+### 9. SUMMARY PLOTS
+
+# This produces a multi plot that shows standard and PC-AiR PCA's side-by-side - both PC1*PC2 plot and the parallel coordinates plots. Use Iteration 2 results for the PC-AiR PCA's.
+
+# Standard PCA - PC1*PC2
+pc.percent <- std_pca$varprop*100
+head(round(pc.percent, 2))
+A <- ggplot(tab, aes(PC1, PC2, color=pop)) +
+    geom_point(size=1) +
+    stat_ellipse(geom = "path", aes(group = pop)) +
+    labs(x = paste("PC1 (", round(pc.percent[1], digits = 2), "%)", sep = ""), 
+       y = paste("PC2 (", round(pc.percent[2], digits = 2), "%)", sep = ""), 
+       color = "Region") +  
+    scale_color_manual(values=pop_cols)+
+    ggtitle(label="Standard PCA")+
+    guides(color = guide_legend(override.aes = list(linetype = "blank")))
+A
+
+
+# Standard PCA - Parallel Coordinates Plot (All PC's)
+B <- ggparcoord(tab, columns=3:12, groupColumn="pop", scale="uniminmax") +
+    scale_color_manual(values=pop_cols)+
+    ggtitle(label="")+
+    scale_x_discrete(labels=c("PC1" = "1", "PC2" = "2","PC3" = "3","PC4" = "4","PC5" = "5","PC6" = "6","PC7" = "7","PC8" = "8","PC9" = "9","PC10" = "10"))+
+    labs(x = "Principal component", y = "Individual scores", color = "Region")
+B
+
+# PC-AiR PCA - PC1*PC2 (USE ITERATION 2)
+pc.percent <- pca_IT2$varprop*100
+head(round(pc.percent, 2))
+K <- ggplot(pc.df_IT2, aes(PC1, PC2, color=pop)) +
+    geom_point(size=1) +
+    stat_ellipse(geom = "path", aes(group = pop)) +
+    labs(x = paste("PC1 (", round(pc.percent[1], digits = 2), "%)", sep = ""), 
+       y = paste("PC2 (", round(pc.percent[2], digits = 2), "%)", sep = ""), 
+       color = "Region") + 
+    scale_color_manual(values=pop_cols)+
+    ggtitle(label="PC-AiR PCA")+
+    guides(color = guide_legend(override.aes = list(linetype = "blank")))
+K
+
+
+# PC-AiR PCA - Parallel Coordinates Plot (All PC's)
+L <- ggparcoord(pc.df_IT2, columns=3:12, groupColumn="pop", scale="uniminmax") +
+    scale_color_manual(values=pop_cols)+
+    ggtitle(label="")+
+    scale_x_discrete(labels=c("PC1" = "1", "PC2" = "2","PC3" = "3","PC4" = "4","PC5" = "5","PC6" = "6","PC7" = "7","PC8" = "8","PC9" = "9","PC10" = "10"))+
+    labs(x = "Principal component", y = "Individual scores", color = "Region")
+L
+
+# Save plots
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.spacing.y = unit(0.01, "cm"),legend.key = element_rect(fill = "transparent")) 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=8), legend.title = element_text(size=8,face="bold"))
+
+A2 <- A + plot_margin + plot_theme + text_size + theme(legend.position = "none")
+B2 <- B + plot_margin + plot_theme + text_size
+K2 <- K + plot_margin + plot_theme + text_size + theme(legend.position = "none")
+L2 <- L + plot_margin + plot_theme + text_size
+
+# Save plot - PCAs and coordinate plots
+
+setwd(paste0(pcairelate_result_dir,"/_PLOTS"))
+tiff("PCAiRelate-Step-9-summary-plots1.tif",width = 17.5, height = 12, unit='cm', res=300)
+ggarrange(A2,B2,K2,L2, ncol = 2, nrow = 2)
+dev.off()
+
+# Save plot - PCAs only
+
+A2 <- A + plot_margin + plot_theme + text_size
+K2 <- K + plot_margin + plot_theme + text_size
+
+setwd(paste0(pcairelate_result_dir,"/_PLOTS"))
+tiff("PCAiRelate-Step-9-summary-plots2.tif",width = 12, height = 12, unit='cm', res=300)
+ggarrange(A2,K2,ncol = 1, nrow = 2)
+dev.off()
+
+
+### 10. SAVE RESULTS
+
+# Save kinship data from iteration 2
+setwd(pcairelate_result_dir)
+saveRDS(mypcrelate_IT2_data, file = "mypcrelate_IT2_data.RData")
+
+# Save as csv
+setwd(pcairelate_result_dir)
+write.csv(mypcrelate_IT2_data,file = "PCRelate-updated-kinship-dataframe-iteration2.csv",row.names = FALSE)
+
+# Save kinship matrix from iteration 2
+setwd(pcairelate_result_dir)
+saveRDS(kin_matrix_IT2, file = "kin_matrix_IT2.RData")
+
+
+```
+
+```{r Separate related and unrelated datasets}
+
+# Load filtered SNP data with sex info
+setwd(input_data_dir)
+data <- readRDS("BTF-3-155-14808-neutral-auto-genlight-sexinfo.RData")
+
+# Load iteration 2 kinship matrix
+setwd(pcairelate_result_dir)
+kin_matrix_IT2 <- readRDS("kin_matrix_IT2.RData")
+
+# Identify close relatives again - check the kinship plots from step 5 to see the cut-off for close relatives, since kinship coeff thresholds are diff from KING
+sampset <- pcairPartition(kinobj=kin_matrix_IT2, kin.thresh=0.17677670,
+                          divobj=kin_matrix_IT2, div.thresh=-0.17677670)
+
+# How many unrelated?
+length(sampset$unrels)
+# How many related?
+length(sampset$rels)
+
+# Save datasets
+
+# Unrelated only
+data2 <- gl.drop.ind(data,ind.list = sampset$rels, recalc = TRUE,mono.rm = TRUE)
+setwd(output_data_dir)
+saveRDS(data2, file = "BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+
+# Related only
+data3 <- gl.keep.ind(data,ind.list = sampset$rels, recalc = TRUE,mono.rm = TRUE)
+setwd(output_data_dir)
+saveRDS(data3, file = "BTF-3-48-13993-neutral-auto-sex-relonly.RData")
+
+# Save final sample metadata
+setwd(output_data_dir)
+write.csv(data2@other$ind.metrics,"BTF-final-samples-metadata-unrelated.csv", row.names = FALSE)
+write.csv(data3@other$ind.metrics,"BTF-final-samples-metadata-related.csv", row.names = FALSE)
+
+```
+
+NOTE: All downstream analyses use the 'unrelated' dataset unless otherwise specified
+
+## 3.2 Principal coordinates analysis (PCoA)
+
+```{r PCoA}
+
+# Load unrelated data
+setwd(output_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+
+# Convert to gi and scale
+data <- gl2gi(data)
+data_scaled <- scaleGen(data, center = FALSE, scale = TRUE, NA.method = "mean")
+
+# Perform PCoA
+pca1 <- dudi.pco(dist(data_scaled), scannf = FALSE,nf = 3)
+pca1_df <- cbind(as.data.frame(pca1$li), data$pop)
+colnames(pca1_df) <- c("Axis1","Axis2","Axis3","pop")
+
+# Order of pop names
+mypoporder <- c("North","Central","South")
+pca1_df$pop <- factor(pca1_df$pop, levels = mypoporder)
+
+# Save pca dataframe
+setwd(pcoa_result_dir)
+write.csv(pca1_df,file = "pcoa-scores-by-region-scaled-unrelated.csv")
+
+# Plots
+
+# Pop colours for plots
+pop_cols <- c("North" = "#ff5f00", "Central" = "#dd217d", "South" = "#725def")
+
+A <- ggplot(data = pca1_df, aes(x = Axis1, y = Axis2, color = pop))+
+  stat_ellipse(geom = "path", aes(group = pop)) +
+  geom_point(size = 1)+
+  labs(x = paste("PC1 (",round((pca1$eig[1]/sum(pca1$eig))*100,digits=2),"%)", sep=""), y = paste("PC2 (",round((pca1$eig[2]/sum(pca1$eig))*100,digits=2),"%)", sep=""), color = "Region", title = "PC1 vs PC2")+
+  guides(fill = guide_legend(byrow = TRUE))+
+  scale_color_manual(values = pop_cols) +
+  guides(color = guide_legend(override.aes = list(linetype = "blank")))
+A
+
+B <- ggplot(data = pca1_df, aes(x = Axis2, y = Axis3, color = pop))+
+  stat_ellipse(geom = "path", aes(group = pop)) +
+  geom_point(size = 1)+
+  labs(x = paste("PC2 (",round((pca1$eig[2]/sum(pca1$eig))*100,digits=2),"%)", sep=""), y = paste("PC3 (",round((pca1$eig[3]/sum(pca1$eig))*100,digits=2),"%)", sep=""), color = "Region", title = "PC2 vs PC3")+
+  guides(fill = guide_legend(byrow = TRUE))+
+  scale_color_manual(values = pop_cols) +
+  guides(color = guide_legend(override.aes = list(linetype = "blank")))
+B
+
+# Save plot for publication
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.spacing.y = unit(0.01, "cm"),legend.key = element_rect(fill = "transparent")) 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=8), legend.title = element_text(size=8,face="bold"))
+no_legend <- theme(legend.position="none")
+
+A2 <- A + plot_margin + plot_theme + text_size
+B2 <- B + plot_margin + plot_theme + text_size
+
+## TIFF and sized for Science Journal
+setwd(paste0(pcoa_result_dir,"/_PLOTS"))
+tiff("neutral-PCoA-with-ellipses-regions-scaled-unrelated-1v2.tif",width = 14, height = 10, unit='cm', res=300)
+ggarrange(A2,
+          labels = c(""),
+          ncol = 1, nrow = 1)
+dev.off()
+
+setwd(paste0(pcoa_result_dir,"/_PLOTS"))
+tiff("neutral-PCoA-with-ellipses-regions-scaled-unrelated-2v3.tif",width = 14, height = 10, unit='cm', res=300)
+ggarrange(B2,
+          labels = c(""),
+          ncol = 1, nrow = 1)
+dev.off()
+
+A2 <- A + plot_margin + plot_theme + text_size + no_legend
+B2 <- B + plot_margin + plot_theme + text_size + no_legend
+
+setwd(paste0(pcoa_result_dir,"/_PLOTS"))
+tiff("neutral-PCoA-with-ellipses-regions-scaled-unrelated-1v2v3.tif",width = 14, height = 6, unit='cm', res=300)
+ggarrange(A2,B2,
+          labels = c("A","B"),
+          ncol = 2, nrow = 1)
+dev.off()
+
+
+```
+
+## 3.3 Discriminant analysis of principal components (DAPC)
+
+```{r DAPC - a priori}
+
+# Load unrelated data
+setwd(output_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+data <- gl2gi(data)
+
+# Perform DAPC with pop priors
+dapc0 <- dapc(data, pop = pop(data), n.pca = 30, n.da = nPop(data)-1, scale = TRUE)
+
+# Choose how many PC's to retain using optim.a.score
+opt <- optim.a.score(dapc0, n.pca = 1:30, n.da = nPop(data)-1, smart = FALSE, plot = TRUE, n.sim = 1000)
+
+setwd(dapc_result_dir)
+sink(file = paste0("DAPC-unrel-apriori-optim-a-score.txt"))
+cat("dapc optim.a.score\n")
+capture.output(opt)
+sink()
+
+# Perform DAPC with pop priors and opt$best
+dapc1 <- dapc(data, pop = pop(data), n.pca = opt$best, n.da = nPop(data)-1, scale = TRUE)
+
+# Quick check
+scatter(dapc1)
+compoplot(dapc1)
+
+setwd(dapc_result_dir)
+sink(file = paste0("DAPC-unrel-apriori-results.txt"))
+cat("***dapc summary***\n")
+cat("\n")
+capture.output(dapc1)
+cat("\n")
+cat("***Group Membership***\n")
+capture.output(summary.dapc(dapc1))
+cat("\n")
+cat("***Group Membership Probabilities***\n")
+capture.output(predict.dapc(dapc1))
+sink()
+
+# Get prior vs posterior group assignments
+table(dapc1$grp,dapc1$assign)
+
+# Get a dataframe of membership probabilities and group assignments
+dapc1_ass <- as.data.frame(memprob$posterior)
+dapc1_ass$prior_assign <- dapc1$grp
+dapc1_ass$post_assign <- dapc1$assign
+
+# Save membership probabilities and assignments
+setwd(dapc_result_dir)
+write.csv(dapc1_ass,file = paste0("DAPC-unrel-apriori-memprob.csv"))
+
+setwd(dapc_result_dir)
+sink(file = paste0("DAPC-unrel-apriori-prior-post-grps.txt"))
+cat(print(table(dapc1$grp,dapc1$assign)))
+sink()
+
+# Set K
+K <- 3
+
+# Set plot colours
+pop_cols <- c("#ff5f00", "#dd217d", "#725def")
+
+# Membership probability plot (STRUCTURE-like plot)
+setwd(paste0(dapc_result_dir,"/_PLOTS"))
+jpeg("DAPC-unrel-apriori-structureplot.png", width = 600, height = 400)
+compoplot(dapc1, posi="bottomright", txt.leg=paste("Cluster", 1:K), lab="", ncol=1, xlab="individuals", col=pop_cols)
+dev.off()
+
+# Assignment plot
+setwd(paste0(dapc_result_dir,"/_PLOTS"))
+jpeg("DAPC-unrel-apriori-assignment-plot.png", width = 600, height = 600)
+assignplot(dapc1)
+dev.off()
+
+# Extract data for plotting (first discriminant function = LD1)
+ind_coords <- as.data.frame(dapc1$ind.coord)
+ind_coords$Group <- dapc1$grp
+
+# Eigenvalues
+setwd(dapc_result_dir)
+sink(file = "DAPC-unrel-apriori-eigenvalues.txt")
+capture.output(dapc1$eig)
+sink()
+
+# Save data for plotting later
+setwd(dapc_result_dir)
+saveRDS(dapc1,file = "DAPC-unrel-apriori-dapc1-object.RData")
+write.csv(dapc1$tab, file = "DAPC-unrel-apriori-PC-Axes.csv")
+write.csv(ind_coords, file = "DAPC-unrel-apriori-LD-Axes.csv")
+write.csv(dapc1$var.contr, file = "DAPC-unrel-apriori-var-contributions.csv")
+
+# Save a publication quality plot
+
+# Convert 'pop' to factor with custom order
+mypoporder <- c("North","Central","South")
+ind_coords$Group <- factor(ind_coords$Group, levels = mypoporder)
+
+# Plot density of LD1 (first discriminant function by group in ggplot)
+A <- ggplot(data=ind_coords, aes(x=LD1, group=Group, fill=Group)) +
+  geom_density(alpha = 0.75)+
+  scale_fill_manual(values=pop_cols,labels=c("North","Central","South"))+
+  labs(x = "LD1", y = "Density")+
+  xlim(-10,12)+
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.01))+ # set y-axis to 2 decimal places
+  theme_classic()
+A
+
+# Plot scatterplot of LD1 and LD2
+B <- ggplot(data=ind_coords, aes(x=LD1, y=LD2, color=Group)) +
+  geom_point(alpha = 0.75)+
+  stat_ellipse(geom = "path", aes(group = Group)) +
+  scale_color_manual(values=pop_cols,labels=c("North","Central","South"))+
+  labs(x = "LD1", y = "LD2", color = "Group")
+B
+
+
+# Save plot for publication
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.spacing.y = unit(0.01, "cm"),legend.key = element_rect(fill = "transparent")) 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=8), legend.title = element_text(size=8,face="bold"))
+no_legend <- theme(legend.position="none")
+
+A2 <- A + plot_margin + plot_theme + text_size + no_legend
+B2 <- B + plot_margin + plot_theme + text_size + no_legend
+
+setwd(paste0(dapc_result_dir,"/_PLOTS"))
+tiff("DAPC-unrel-apriori-LD1-plot.tif",width = 6.5, height = 5, unit='cm', res=300)
+ggarrange(A2,
+          labels = c(""),
+          ncol = 1, nrow = 1)
+dev.off()
+
+setwd(paste0(dapc_result_dir,"/_PLOTS"))
+tiff("DAPC-unrel-apriori-LD1-LD2-plot.tif",width = 6.5, height = 5, unit='cm', res=300)
+ggarrange(B2,
+          labels = c(""),
+          ncol = 1, nrow = 1)
+dev.off()
+
+
+```
+
+```{r DAPC - de novo}
+
+# Load unrelated data
+setwd(output_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+data <- gl2gi(data)
+
+# Infer K without pop priors
+clusters <- find.clusters(data, max.n.clust = 10, n.pca = 30)
+
+# Preliminary DAPC
+dapc0 <- dapc(data, grp = clusters$grp, n.pca = 30, n.da = length(levels(clusters$grp))-1, scale = TRUE)
+
+# Choose how many PC's to retain using optim.a.score
+opt <- optim.a.score(dapc0, n.pca = 1:30, n.da = nPop(data)-1, smart = FALSE, plot = TRUE, n.sim = 1000)
+
+setwd(dapc_result_dir)
+sink(file = paste0("DAPC-unrel-denovo-optim-a-score.txt"))
+cat("dapc optim.a.score\n")
+capture.output(opt)
+sink()
+
+# Perform DAPC with pop priors and opt$best
+dapc1 <- dapc(data, pop = clusters$grp, n.pca = opt$best, n.da = length(levels(clusters$grp))-1, scale = TRUE)
+
+setwd(dapc_result_dir)
+sink(file = paste0("DAPC-unrel-denovo-results.txt"))
+cat("***dapc summary***\n")
+cat("\n")
+capture.output(dapc1)
+cat("\n")
+cat("***Group Membership***\n")
+capture.output(summary.dapc(dapc1))
+cat("\n")
+cat("***Group Membership Probabilities***\n")
+capture.output(predict.dapc(dapc1))
+sink()
+
+# Examine grp membership probability
+memprob <- predict.dapc(dapc1)
+memprob$posterior
+plot(memprob$posterior[,1],memprob$posterior[,2],xlab="Cluster 1", ylab="Cluster 2") # add more for additional clusters
+
+# Get prior vs posterior group assignments
+table(dapc1$grp,dapc1$assign)
+
+# Get a dataframe of membership probabilities and group assignments
+dapc1_ass <- as.data.frame(memprob$posterior)
+colnames(dapc1_ass) <- c("Cluster1","Cluster2")
+dapc1_ass$prior_assign <- dapc1$grp
+dapc1_ass$post_assign <- dapc1$assign
+
+# Save membership probabilities and assignments
+setwd(dapc_result_dir)
+write.csv(dapc1_ass,file = paste0("DAPC-unrel-denovo-memprob.csv"))
+
+setwd(dapc_result_dir)
+sink(file = paste0("DAPC-unrel-denovo-prior-post-grps.txt"))
+cat(print(table(dapc1$grp,dapc1$assign)))
+sink()
+
+# Plotting DAPC results
+
+K <- 2
+
+# Membership probability plot (STRUCTURE-like plot)
+setwd(paste0(dapc_result_dir,"/_PLOTS"))
+jpeg(paste0("DAPC-unrel-denovo-structureplot.png"), width = 600, height = 400)
+compoplot(dapc1, posi="bottomright", txt.leg=paste("Cluster", 1:K), lab="", ncol=1, xlab="individuals", col=funky(K))
+dev.off()
+
+# Assignment plot
+setwd(paste0(dapc_result_dir,"/_PLOTS"))
+jpeg(paste0("DAPC-unrel-denovo-assignment-plot.png"), width = 600, height = 600)
+assignplot(dapc1) # Use subset to examine individuals more closely
+dev.off()
+
+# Extract data for plotting (first discriminant function = LD1)
+ind_coords <- as.data.frame(dapc1$ind.coord)
+ind_coords$Group <- dapc1$grp
+
+# Eigenvalues
+setwd(dapc_result_dir)
+sink(file = paste0("DAPC-unrel-apriori-eigenvalues.txt"))
+capture.output(dapc1$eig)
+sink()
+
+# Save data for plotting later
+setwd(dapc_result_dir)
+saveRDS(dapc1,file = paste0("DAPC-unrel-denovo-dapc1-object.RData"))
+write.csv(dapc1$tab, file = paste0("DAPC-unrel-denovo-PC-Axes.csv"))
+write.csv(ind_coords, file = paste0("DAPC-unrel-denovo-LD-Axes.csv"))
+write.csv(dapc1$var.contr, file = paste0("DAPC-unrel-denovo-var-contributions.csv"))
+
+# Save a publication quality plot
+setwd(dapc_result_dir)
+ind_coords <- read.csv(paste0("DAPC-unrel-denovo-LD-Axes.csv"), header = TRUE)
+
+# Set Group as factor
+ind_coords$Group <- as.factor(ind_coords$Group)
+
+# Plot density of LD1 (first discriminant function by group in ggplot)
+A <- ggplot(data=ind_coords, aes(x=LD1, group=Group, fill=Group)) +
+  geom_density(alpha = 0.75)+
+  scale_fill_manual(values=funky(K), labels = c("Cluster 1", "Cluster 2"))+
+  labs(x = "LD1", y = "Density")+
+  xlim(-4,6)+ 
+  scale_y_continuous(labels = scales::number_format(accuracy = 0.01))+
+  theme_classic()
+A
+
+# Save plot for publication
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.spacing.y = unit(0.01, "cm"),legend.key = element_rect(fill = "transparent")) 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=8), legend.title = element_text(size=8,face="bold"))
+no_legend <- theme(legend.position="none")
+
+A2 <- A + plot_margin + plot_theme + text_size + no_legend
+
+setwd(paste0(dapc_result_dir,"/_PLOTS"))
+tiff(paste0("DAPC-unrel-denovo-LD1-plot.tif"),width = 6.5, height = 5, unit='cm', res=300)
+ggarrange(A2,
+          labels = c(""),
+          ncol = 1, nrow = 1)
+dev.off()
+
+
+```
+
+## 3.4 LEA
+
+```{r LEA}
+
+# Load unrelated data
+setwd(output_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+
+# Convert to geno
+gl2geno(data, outfile = "BTF-unrel-LEA-input", outpath=lea_result_dir)
+
+# New project
+setwd(lea_result_dir)
+snmf_project = LEA::snmf("./BTF-unrel-LEA-input.geno",
+                             K = 1:10,entropy = TRUE,
+                             repetitions = 100,
+                             project = "new",ploidy = 2)
+
+# Choose best K from plot. This is the lowest cross-entropy score. If all equal and flattened out take the first at the level.
+setwd(paste0(lea_result_dir,"/_PLOTS"))
+jpeg("LEA_entropy_plot_unrelated.jpg")
+plot(snmf_project, col = "orange", pch = 19, cex = 1.2)
+dev.off()
+
+K = 2
+
+# Save the best run for that K to plot
+best = which.min(LEA::cross.entropy(snmf_project, K = K))
+
+# Set an assortment of colours (that matches the number of k you have)
+my.colors <- c("firebrick","darkcyan")
+
+setwd(paste0(lea_result_dir,"/_PLOTS"))
+jpeg("LEA_ancestry_proportions_unrelated.jpg",width = 600, height = 300)
+LEA::barchart(snmf_project, K = K, run = best,
+        border = NA, space = 0,
+        col = my.colors,
+        xlab = "Individuals",
+        ylab = "Ancestry proportions",
+        main = "Ancestry matrix", sort.by.Q = FALSE) -> bp_K
+axis(1, at = 1:length(bp_K$order),
+    labels = bp_K$order, las=1,
+    cex.axis = .4)
+dev.off()
+
+```
+
+## 3.5 STRUCTURE
+
+```{r STRUCTURE - Run}
+
+### SET UP
+
+# Download the non-GUI version of STRUCTURE here: https://web.stanford.edu/group/pritchardlab/structure_software/release_versions/v2.3.4/html/structure.html
+# Unzip and specify the location of this directory here:
+structure_exec <- "path/to/structure.exe"
+
+### ANALYSIS - INFER K
+
+# Load unrelated data
+setwd(output_data_dir)
+data_unrel <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+
+# To save computational time, subsample loci
+data_unrel2 <- gl.subsample.loci(data_unrel, method = "random", mono.rm = TRUE, n = 5000)
+
+# Check that these loci still capture the same structure in the data
+data3 <- gl2gi(data_unrel2)
+data3_scale <- scaleGen(data3,center = FALSE, scale = TRUE, NA.method = "mean")
+pca1 <- dudi.pco(dist(data3_scale), scannf = FALSE,nf = 3)
+pca1_df <- cbind(as.data.frame(pca1$li), data3$pop) # Colour points by location
+colnames(pca1_df) <- c("Axis1","Axis2","Axis3","pop")
+A <- ggplot(data = pca1_df, aes(x = Axis1, y = Axis2, color = pop))+
+  stat_ellipse(geom = "path", aes(group = pop)) +
+  geom_point(size = 1)+
+  labs(x = paste("PC1 (",round((pca1$eig[1]/sum(pca1$eig))*100,digits=2),"%)", sep=""), y = paste("PC2 (",round((pca1$eig[2]/sum(pca1$eig))*100,digits=2),"%)", sep=""), color = "Region", title = "PC1 vs PC2")+
+  guides(fill = guide_legend(byrow = TRUE))+
+  guides(color = guide_legend(override.aes = list(linetype = "blank")))
+A
+
+# Save subset
+setwd(output_data_dir)
+saveRDS(data_unrel2, "BTF-3-107-5000-neutral-auto-sex-unrel.RData")
+
+# Specify what data and run is being conducted for renaming the STRUCTURE output later
+data_name <- "BTF-3-107-5000-unrel"
+run_name <- "STRUCTURE-inferk-run1" # Multiple runs performed, changing run # each time
+
+# Run STRUCTURE. Some results are stored in the structure_result object but full results are saved in the directory below (only if you set delete.files = FALSE)
+setwd(struc_result_dir)
+structure_result <- gl.run.structure(x = data_unrel2, exec = structure_exec, plot.out = TRUE, delete.files = FALSE, k.range = c(1:6), num.k.rep = 1, burnin = 10000, numreps = 100000, noadmix = FALSE, freqscorr = TRUE, pop.prior = NULL, inferalpha = TRUE, alpha = 1)
+
+# STRUCTURE output saves with a very long name, using the run and time stamps. Files renamed using code below.
+
+# Define the prefix to remove
+prefix_to_remove <- "gtypes.created.on.2024-06-22.22.46.14.structureRun" # changed as needed
+
+# Rename the root folder where results were saved
+setwd(struc_result_dir)
+file.rename(prefix_to_remove, paste(data_name,run_name,sep="_"))
+
+# Remove the prefix from all files inside that folder
+new_folder_path <- file.path(paste(struc_result_dir,"/",paste(data_name,run_name,sep="_"), sep = ""))
+files <- list.files(new_folder_path, full.names = TRUE)
+file_names <- basename(files)
+new_file_names <- sub(paste0("^", prefix_to_remove), "", file_names)
+new_file_paths <- file.path(new_folder_path, new_file_names)
+file.rename(files, new_file_paths)
+
+
+
+### ANALYSIS - DETECT MIGRANTS
+
+# For detecting recent migrants, import the data WITH related individuals
+setwd(input_data_dir)
+data_rel <- readRDS("BTF-3-155-14808-neutral-auto-genlight-sexinfo.RData")
+
+data_rel2 <- gl.subsample.loci(data_rel, method = "random", mono.rm = TRUE, n = 5000)
+
+# Check that these loci still capture the same structure in the data
+data3 <- gl2gi(data_rel2) # convert to genind object
+data3_scale <- scaleGen(data3,center = FALSE, scale = TRUE, NA.method = "mean")
+pca1 <- dudi.pco(dist(data3_scale), scannf = FALSE,nf = 3)
+pca1_df <- cbind(as.data.frame(pca1$li), data3$pop) # Colour points by location
+colnames(pca1_df) <- c("Axis1","Axis2","Axis3","pop")
+A <- ggplot(data = pca1_df, aes(x = Axis1, y = Axis2, color = pop))+
+  stat_ellipse(geom = "path", aes(group = pop)) +
+  geom_point(size = 1)+
+  labs(x = paste("PC1 (",round((pca1$eig[1]/sum(pca1$eig))*100,digits=2),"%)", sep=""), y = paste("PC2 (",round((pca1$eig[2]/sum(pca1$eig))*100,digits=2),"%)", sep=""), color = "Region", title = "PC1 vs PC2")+
+  guides(fill = guide_legend(byrow = TRUE))+
+  #scale_color_manual(values = c("#2176ae","#ce4257","#1A936F")) +
+  guides(color = guide_legend(override.aes = list(linetype = "blank")))
+A
+
+# Save subset
+setwd(input_data_dir)
+saveRDS(data_rel2, "BTF-3-155-5000-neutral-auto-genlight-sexinfo.RData")
+
+# Specify what data and run is being conducted for renaming the STRUCTURE output later
+data_name <- "BTF-3-107-5000-rel"
+run_name <- "STRUCTURE-gensback3-k3-run1" # Multiple runs performed, changing run # each time
+
+# Set no. inferred pops
+inferred_k <- 3
+
+# Run STRUCTURE
+setwd(struc_result_dir)
+structure_result <- gl.run.structure(x = data_rel2, exec = structure_exec, plot.out = FALSE, delete.files = FALSE, k.range = inferred_k, num.k.rep = 4, burnin = 10000, numreps = 100000, noadmix = FALSE, freqscorr = TRUE, pop.prior = "usepopinfo", gensback = 3, migrprior = 0.05, pfrompopflagonly = FALSE, popflag = NULL, inferalpha = TRUE, alpha = 1)
+
+# Define the prefix to remove
+prefix_to_remove <- "gtypes.created.on.2024-06-13.15.59.14.structureRun" # changed as needed
+
+# Rename the root folder where results were saved
+setwd(struc_result_dir)
+file.rename(prefix_to_remove, paste(data_name,run_name,sep="_"))
+
+# Remove the prefix from all files inside that folder
+new_folder_path <- file.path(paste(struc_result_dir,"/",paste(data_name,run_name,sep="_"), sep = ""))
+files <- list.files(new_folder_path, full.names = TRUE)
+file_names <- basename(files)
+new_file_names <- sub(paste0("^", prefix_to_remove), "", file_names)
+new_file_paths <- file.path(new_folder_path, new_file_names)
+file.rename(files, new_file_paths)
+
+```
+
+```{r STRUCTURE - Plots & Evanno method}
+
+# PLOT EVANNOT RESULTS
+
+# Uses STRUCTURE HARVESTER (external to R) and the output files saved from gl.run.structure (you will need to modify the names so the name itself ends in _f with no extension, rather than ._f), then import the result 'evanno.txt' here. For STRUCTURE HARVESTER, download from: https://github.com/dentearl/structureHarvester/
+
+# Set name to save plots
+data_name <- "BTF-3-107-5000-unrel-STRUCTURE"
+
+# Set path to STRUCTURE HARVESTER results. This assumes you already ran STRUCTURE HARVESTER and saved the results in the struc_result_dir directory in a sub-directory STRUHARV_results
+setwd(paste0(struc_result_dir,"/STRUHARV_results"))
+
+# Read in Evanno results
+evanno_results <- read.table("evanno.txt")
+colnames(evanno_results) <- c("K",	"Reps",	"Mean_LnP_K",	"Stdev_LnP_K",	"Ln_K",	"abs_Ln_K",	"Delta_K")
+label_names <- c("K",	"Reps",	"Mean LnP(K)",	"Stdev LnP(K)",	"Ln'(K)",	"|Ln''(K)|",	"Delta K")
+evanno_results
+
+A <- ggplot(data = evanno_results, mapping = aes(x = factor(K), y = Mean_LnP_K))+
+  geom_point()+
+  geom_errorbar(aes(ymin = Mean_LnP_K - Stdev_LnP_K, ymax = Mean_LnP_K + Stdev_LnP_K), width = 0.2)+
+  labs(x = "K", y = "Mean L(K)")+
+  scale_x_discrete(labels = evanno_results$K)
+A
+
+B <- ggplot(data = evanno_results, mapping = aes(x = factor(K), y = Ln_K))+
+  geom_point()+
+  labs(x = "K", y = "Ln'(K)")+
+  scale_x_discrete(labels = evanno_results$K)
+B
+
+C <- ggplot(data = evanno_results, mapping = aes(x = factor(K), y = abs_Ln_K))+
+  geom_point()+
+  labs(x = "K", y = "|Ln''(K)|")+
+  scale_x_discrete(labels = evanno_results$K)
+C
+
+# Delta K is calculated as mean(|L''(K)|) / Stdev LnP(K)
+D <- ggplot(data = evanno_results, aes(x = K, y = Delta_K)) +
+  geom_point() +
+  geom_line() + # Add this line to connect the points
+  labs(x = "K", y = "Delta K") +
+  scale_x_continuous(breaks = evanno_results$K, labels = evanno_results$K)
+D
+
+# Save Evanno plots
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.position = "none") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8, angle = 0, hjust = 0.5), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6))
+
+A2 <- A + plot_margin + plot_theme + text_size
+B2 <- B + plot_margin + plot_theme + text_size
+C2 <- C + plot_margin + plot_theme + text_size
+D2 <- D + plot_margin + plot_theme + text_size
+
+## TIFF and sized for Science Journal
+setwd(paste0(struc_result_dir,"/_PLOTS"))
+tiff(paste0(data_name,"-evanno.tif"),width = 17.5, height = 7, unit='cm', res=1200)
+ggarrange(A2,D2,
+          labels = c("A","B"),
+          ncol = 2, nrow = 1)
+dev.off()
+
+
+### PLOT ADMIXTURE PLOTS
+
+# K = 3
+
+# Set working directory for where the CLUMPP result is saved. This assumes you saved the CLUMPP result in sub-folder CLUMPP_K3 - change for your own data.
+setwd(paste0(struc_result_dir,"/STRUHARV_results/CLUMPP_K3"))
+clump_result <- read.table(file = "K3.outfile", header=FALSE)
+clump_result
+
+# You'll also need the sample ids - get this from the original order of samples you used in STRUCTURE
+setwd(paste0(struc_result_dir,"/STRUHARV_results"))
+sample_order <- read.table(file = "sample_order.txt", header=FALSE)
+sample_order <- sample_order$V1
+sample_order
+
+# Extract and rename the relevant columns (V6, V7, V8 corresponds to 3 genetic clusters - YOU NEED TO MODIFY THIS FOR YOUR SPECIFIC VALUE OF K)
+clump_result2 <- clump_result[,c(1,6:8)] # select only the first and last three columns (for K=3, change for other values of K)
+colnames(clump_result2) <- c("sample","cluster_1","cluster_2","cluster_3")
+clump_result2
+
+# Add sample names instead of ids (order will be the same)
+clump_result2$sample <- sample_order
+clump_result2
+
+# Save updated dataframe with sample names
+setwd(paste0(struc_result_dir,"/STRUHARV_results/CLUMPP_K3"))
+write.csv(clump_result2,file = "K3-output-sample-names.csv", row.names = FALSE)
+
+# Convert proportions to numeric
+clump_result3 <- clump_result2 %>%
+  mutate(cluster_1 = as.numeric(cluster_1),
+         cluster_2 = as.numeric(cluster_2),
+         cluster_3 = as.numeric(cluster_3))
+
+# Melt the dataframe
+clump_result4 <- clump_result3 %>%
+  gather(key = "Cluster_props", value = "Value", -sample)
+clump_result4
+
+# Plot the stacked bar chart
+E <- ggplot(clump_result4, aes(x = sample, y = Value, fill = Cluster_props)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Sample", y = "Admixture coefficient", fill = "Cluster", title = "K = 3") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#26547c","#ef476f","#ffd166"), labels = c("1", "2", "3"))
+E
+
+
+# K = 4
+
+# Input data
+setwd(paste0(struc_result_dir,"/STRUHARV_results/CLUMPP_K4"))
+clump_result <- read.table(file = "K4.outfile", header=FALSE)
+clump_result
+
+setwd(paste0(struc_result_dir,"/STRUHARV_results"))
+sample_order <- read.table(file = "sample_order.txt", header=FALSE)
+sample_order <- sample_order$V1
+sample_order
+
+# Extract and rename the relevant columns (V6, V7, V8 corresponds to 3 genetic clusters - YOU NEED TO MODIFY THIS FOR YOUR SPECIFIC VALUE OF K)
+clump_result2 <- clump_result[,c(1,6:9)] # select only the first and last three columns (for K=3, change for other values of K)
+colnames(clump_result2) <- c("sample","cluster_1","cluster_2","cluster_3","cluster_4")
+clump_result2
+
+# Add sample names instead of ids (order will be the same)
+clump_result2$sample <- sample_order
+clump_result2
+
+setwd(paste0(struc_result_dir,"/STRUHARV_results/CLUMPP_K4"))
+write.csv(clump_result2,file = "K4-output-sample-names.csv", row.names = FALSE)
+
+# Convert proportions to numeric
+clump_result3 <- clump_result2 %>%
+  mutate(cluster_1 = as.numeric(cluster_1),
+         cluster_2 = as.numeric(cluster_2),
+         cluster_3 = as.numeric(cluster_3),
+         cluster_4 = as.numeric(cluster_4))
+
+# Melt the dataframe
+clump_result4 <- clump_result3 %>%
+  gather(key = "Cluster_props", value = "Value", -sample)
+clump_result4
+
+# Plot the stacked bar chart
+F1 <- ggplot(clump_result4, aes(x = sample, y = Value, fill = Cluster_props)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Sample", y = "Admixture coefficient", fill = "Cluster", title = "K = 4") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#26547c","#ef476f","#ffd166","#93e1d8"), labels = c("1", "2", "3","4"))
+F1
+
+
+# Save barplot with legend
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill="white",color=NA), panel.border = element_rect(fill=NA),legend.position = "right") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 4.5, angle = 90, hjust = 0.5), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6))
+
+E2 <- E + plot_margin + plot_theme + text_size
+F2 <- F1 + plot_margin + plot_theme + text_size
+
+setwd(paste0(struc_result_dir,"/_PLOTS"))
+tiff(paste0(data_name,"-barplot-K3-K4.tif"),width = 17.5, height = 12, unit='cm', res=1200)
+ggarrange(E2,F2,
+          labels = c("C","D"),
+          ncol = 1, nrow = 2)
+dev.off()
+
+```
+
+## 3.6 Stats
+
+```{r Pairwise Fst heatmap}
+
+# Load unrelated data
+setwd(output_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+
+# Set pop to sites
+data@pop <- as.factor(data@other$ind.metrics$site_code)
+
+# Exclude sites with n < 5
+table(data$pop)
+data <- gl.drop.pop(data, pop.list = c("BR","SA"), recalc = TRUE,mono.rm = TRUE)
+
+# Order of pop names
+mypoporder <- c("HPHT", "HPTT", "11MS", "10MB", "SWTM", "N2D", "3WFS", "4MB", "CMB", "LFT")
+data@pop <- factor(data@pop, levels = mypoporder)
+
+# Run with boots 
+FST_boots <- gl.fst.pop(data, nboots = 1000, percent = 95)
+FST_Fsts <- as.data.frame(FST_boots$Fsts)
+min(FST_Fsts,na.rm=T)
+max(FST_Fsts,na.rm=T)
+
+FST_boots$Pvalues
+FST_Ps <- as.data.frame(FST_boots$Pvalues)
+min(FST_Ps,na.rm=T)
+max(FST_Ps,na.rm=T)
+
+# Convert the output to df with col1+2 as pops compared and col3 as FST
+ind <- which(lower.tri(FST_Fsts, diag = FALSE), arr.ind = TRUE)
+nn <- dimnames(FST_Fsts)
+FST_Fsts_tab  <- data.frame(row = nn[[1]][ind[, 1]],
+                                     col = nn[[2]][ind[, 2]],
+                                     val = FST_Fsts[ind])
+names(FST_Fsts_tab) <- c("Pop2","Pop1","FST")
+# Also add a col for comparison number/row number so you can keep the order in the plot
+# Adjust pop1 vs pop2 labelling,and fwd vs rev seq ordering to make heatmap ordered logically
+FST_Fsts_tab$OrderPop1 <- seq(from=1, to=nrow(FST_Fsts_tab))
+FST_Fsts_tab$OrderPop2 <- rev(seq(from=1, to=nrow(FST_Fsts_tab)))
+head(FST_Fsts_tab)
+
+# Save as .txt
+setwd(stats_result_dir)
+write.table(FST_Fsts_tab, "fst-for-Heatmap-unrelated.txt", row.names = F)
+
+# Import data for plotting FST heatmap
+setwd(stats_result_dir)
+FSTtable<-read.table("fst-for-Heatmap-unrelated.txt", header=T)
+
+# Plot fst heatmap
+p1 <- ggplot(FSTtable, aes(x=reorder(Pop1,OrderPop1), y=reorder(Pop2, OrderPop2))) + 
+  geom_tile(aes(fill = FST), colour = "white", stat="identity") + 
+  scale_fill_gradient(low = "white", high = "#F8766D") +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+        panel.background = element_blank(),
+        axis.title.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.x = element_text(angle = 45,vjust=1,hjust=1),
+        legend.background = element_rect(fill=NULL, linewidth=0.5, linetype="solid", colour ="lightgrey"),
+        legend.position = c(0.9, 0.85))
+
+# Save plot
+setwd(paste0(stats_result_dir,"/_PLOTS"))
+tiff('Pairwise_FST_Heatmap-sites-unrelated.tiff', 
+     height=14, width=14, unit='cm', res=300)
+p1
+dev.off()  
+
+```
+
+```{r diveRsity stats - by region}
+
+# Load unrelated data
+setwd(output_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+name <- "BTF-3-107-14788-neutral-auto-sex-unrel"
+dataset <- "unrelated-regions"
+
+# Save a copy of the genlight object in genepop format
+gl2genepop(data,outfile=paste0(name,"-genepop.GEN"),outpath = output_data_dir) 
+
+# Diversity stats by population (Ar, Fis, HWE, with bootstrapped CI's)
+diveRsity_stats <- basicStats(infile = paste0(output_data_dir,"/",name,"-genepop.GEN"),outfile = paste0(output_dir_stats,"/","diveRsity-basicStats-",dataset), fis_ci = TRUE, ar_ci=TRUE, ar_boots = 999, fis_boots = 999, rarefaction = FALSE, fis_alpha = 0.05, mc_reps = 999)
+
+# Save average stats overall by pop
+diveRsity_pops <- names(diveRsity_stats$main_tab)
+true_pops <- levels(data@pop)
+num_pops <- length(true_pops)
+
+# For pops in 1:num_pops, create a dataframe that adds on the summary stats results for each pop as an additional column
+columns_list <- list()
+columns_list[[1]] <- rownames(diveRsity_stats$main_tab[[1]])
+for (i in 1:num_pops) {
+  columns_list[[i + 1]] <- diveRsity_stats$main_tab[[i]][,(nLoc(data) + 1)]
+}
+stats_per_pop <- as.data.frame(do.call(cbind, columns_list))
+colnames(stats_per_pop) <- c("stat", true_pops)
+stats_per_pop
+
+# Save results
+setwd(stats_result_dir)
+write.csv(stats_per_pop,file = paste0("diveRsity-basicStats-",dataset,"-summary.csv"), row.names = FALSE)
+
+
+# Bootstrap Pairwise Fst [wont work with <3 pops]
+
+# Set the output name
+output_name <- paste0("diveRsity-",dataset)
+
+# Run diffCalc with pairwise = TRUE and bs_pairwise = TRUE
+setwd(stats_result_dir)
+diveRsity_Fst <- diffCalc(infile = paste0(output_data_dir,"/",name,"-genepop.GEN"), outfile = output_name, fst = TRUE, pairwise = TRUE, bs_locus = FALSE, bs_pairwise = TRUE, boots = 100, ci_type = "individuals", alpha = 0.05)
+
+# Extract pairwise Fst between pops with bs
+pw_fst_result <- diveRsity_Fst$bs_pairwise$Fst
+pw_fst_result$populations <- c("North-vs-Central","North-vs-South","Central-vs-South")
+
+# Save result
+setwd(paste0(stats_result_dir,"/","diveRsity-",dataset,"-[diffCalc]"))
+write.csv(pw_fst_result,file = paste0("pairwise-Fst-summary.csv"), row.names = FALSE)
+
+# Global Fstats (across all samples)
+output_name <- paste0("diveRsity-global-",dataset)
+
+setwd(stats_result_dir)
+diveRsity_Fst_glb <- diffCalc(infile = paste0(output_data_dir,"/",name,"-genepop.GEN"), outfile = output_name, fst = TRUE, pairwise = FALSE, bs_locus = TRUE, bs_pairwise = FALSE, boots = 100, ci_type = "loci", alpha = 0.05)
+
+# Extract average over all loci
+glb_fst_result <- diveRsity_Fst_glb$global_bs
+
+# Save summary result
+setwd(paste0(stats_result_dir,"/","diveRsity-global-",dataset,"-[diffCalc]"))
+write.csv(glb_fst_result,file = paste0("Global-stats-summary.csv"), row.names = FALSE)
+
+```
+
+```{r diveRsity stats - by sex}
+
+# Load unrelated data
+setwd(output_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+name <- "BTF-3-107-14788-neutral-auto-sex-unrel"
+dataset <- "unrelated-sex"
+
+# Set pops to sex
+data@pop <- as.factor(data@other$ind.metrics$sex)
+table(data@pop)
+
+# Save a copy of the genlight object in genepop format
+gl2genepop(data,outfile=paste0(name,"-genepop.GEN"),outpath = output_data_dir) 
+
+# Diversity stats by population (Ar, Fis, HWE, with bootstrapped CI's)
+diveRsity_stats <- basicStats(infile = paste0(output_data_dir,"/",name,"-genepop.GEN"),outfile = paste0(output_dir_stats,"/","diveRsity-basicStats-",dataset), fis_ci = TRUE, ar_ci=TRUE, ar_boots = 999, fis_boots = 999, rarefaction = FALSE, fis_alpha = 0.05, mc_reps = 999)
+
+# Save average stats overall by pop
+diveRsity_pops <- names(diveRsity_stats$main_tab)
+true_pops <- levels(data@pop)
+num_pops <- length(true_pops)
+
+# For pops in 1:num_pops, create a dataframe that adds on the summary stats results for each pop as an additional column
+columns_list <- list() 
+columns_list[[1]] <- rownames(diveRsity_stats$main_tab[[1]])
+# Use a loop to add columns for each population
+for (i in 1:num_pops) {
+  columns_list[[i + 1]] <- diveRsity_stats$main_tab[[i]][,(nLoc(data) + 1)]
+}
+stats_per_pop <- as.data.frame(do.call(cbind, columns_list))
+colnames(stats_per_pop) <- c("stat", true_pops)
+
+# Save results
+setwd(stats_result_dir)
+write.csv(stats_per_pop,file = paste0("diveRsity-basicStats-",dataset,"-summary.csv"), row.names = FALSE)
+
+```
+
+## 3.7 Spatial analyses
+
+```{r SAA - All regions}
+
+# Load unrelated data
+setwd(output_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+
+# Merge pops
+data2 <- gl.merge.pop(data, old = c("North","Central","South"), new = "AllSites")
+
+# Examine distribution of euclidian distances between samples
+dist_matrix <- distm(as.data.frame(cbind(data2$other$latlon$lon,data2$other$latlon$lat)))
+dist_df <- data.frame(value = c(dist_matrix))
+
+setwd(paste0(saa_result_dir,"/_PLOTS"))
+jpeg("Histogram-euclidian-geo-distances.jpg", width = 500, height = 300)
+hist(dist_df)
+dev.off()
+
+# Run SAA
+spauto <- gl.spatial.autoCorr(data2,coordinates = "latlon",bins = c(0,2500,5000,10000,20000,30000,40000,50000,75110),reps = 9999,permutation = TRUE,bootstrap = TRUE)
+
+# Format
+spauto2 <- as.data.frame(spauto$AllSites)
+spauto2$Bin_km <- spauto2$Bin / 1000
+
+# Save the results
+setwd(saa_result_dir)
+write.csv(spauto2,file = "spauto_results-all-samples-unrelated.csv")
+
+# Create scatterplot with error bars (error bars are the 95% confidence intervals around each value of 'r' calculated, based on bootstrapping)
+A <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey")+
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  scale_x_continuous(breaks = spauto2$Bin_km)+
+  labs(x = "Distance class (km)",y = "r (corrected)") +
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null), alpha = 0.3, fill = "#22908C") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "#22908C") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "#22908C")
+A
+
+# Save plot for publication
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.position = "none") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8, angle = 45, hjust = 1), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6))
+
+A2 <- A + plot_margin + plot_theme + text_size
+
+## TIFF and sized for Science Journal
+setwd(paste0(saa_result_dir,"/_PLOTS"))
+tiff("Spauto-all-samples-unrelated.tif",width = 12, height = 6, unit='cm', res=300)
+ggarrange(A2,
+          labels = c(""),
+          ncol = 1, nrow = 1)
+dev.off()
+
+```
+
+```{r SAA - Separately for each sex}
+
+# Load unrelated data
+setwd(output_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+
+# FEMALES
+
+data$pop <- as.factor(data@other$ind.metrics$sex)
+data2 <- gl.keep.pop(data,pop.list = "F",recalc = TRUE,mono.rm = TRUE)
+
+# Convert back to pop
+data2$pop <- as.factor(data2@other$ind.metrics$pop)
+table(data2$pop)
+data3 <- gl.merge.pop(data2, old = c("North","Central","South"), new = "AllSites")
+
+# Examine distribution of euclidian distances between samples
+dist_matrix <- distm(as.data.frame(cbind(data3$other$latlon$lon,data3$other$latlon$lat)))
+dist_df <- data.frame(value = c(dist_matrix))
+
+setwd(paste0(saa_result_dir,"/_PLOTS"))
+jpeg("Histogram-euclidian-geo-distances-females.jpg", width = 500, height = 300)
+hist(dist_df)
+dev.off()
+
+# Run SAA
+spauto <- gl.spatial.autoCorr(data3,coordinates = "latlon",bins = c(0,5000,10000,20000,30000,40000,76000),reps = 9999,permutation = TRUE,bootstrap = TRUE)
+
+# Format results
+spauto2 <- as.data.frame(spauto$AllSites)
+spauto2$Bin_km <- spauto2$Bin / 1000
+
+# Save the results
+setwd(saa_result_dir)
+write.csv(spauto2,file = "spauto_results-all-samples-unrelated-females.csv")
+
+# create scatterplot with error bars (error bars are the 95% confidence intervals around each value of 'r' calculated, based on bootstrapping)
+A <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey")+
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  scale_x_continuous(breaks = spauto2$Bin_km)+
+  labs(x = "Distance class (km)",y = "r (corrected)", title = "Females") +
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null), alpha = 0.3, fill = "#FFCD00") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "#FFCD00") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "#FFCD00")
+A
+
+
+# MALES
+
+data$pop <- as.factor(data@other$ind.metrics$sex)
+data2 <- gl.keep.pop(data,pop.list = "M",recalc = TRUE,mono.rm = TRUE)
+
+# Convert back to pop
+data2$pop <- as.factor(data2@other$ind.metrics$pop)
+table(data2$pop)
+data3 <- gl.merge.pop(data2, old = c("North","Central","South"), new = "AllSites")
+
+# Examine distribution of euclidian distances between samples
+dist_matrix <- distm(as.data.frame(cbind(data3$other$latlon$lon,data3$other$latlon$lat)))
+dist_df <- data.frame(value = c(dist_matrix))
+
+setwd(paste0(saa_result_dir,"/_PLOTS"))
+jpeg("Histogram-euclidian-geo-distances-males.jpg", width = 500, height = 300)
+hist(dist_df)
+dev.off()
+
+# Run SAA
+spauto <- gl.spatial.autoCorr(data3,coordinates = "latlon",bins = c(0,7000,20000,30000,40000,76000),reps = 9999,permutation = TRUE,bootstrap = TRUE)
+
+# Format results
+spauto2 <- as.data.frame(spauto$AllSites)
+spauto2$Bin_km <- spauto2$Bin / 1000
+
+# Save the results
+setwd(saa_result_dir)
+write.csv(spauto2,file = "spauto_results-all-samples-unrelated-males.csv")
+
+# Create scatterplot with error bars (error bars are the 95% confidence intervals around each value of 'r' calculated, based on bootstrapping)
+B <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey")+
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  scale_x_continuous(breaks = spauto2$Bin_km)+
+  labs(x = "Distance class (km)",y = "r (corrected)", title = "Males") +
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null), alpha = 0.3, fill = "#00843D") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "#00843D") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "#00843D")
+B
+
+
+# Save plot for publication
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.position = "none") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8, angle = 45, hjust = 1), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6))
+
+A2 <- A + plot_margin + plot_theme + text_size
+B2 <- B + plot_margin + plot_theme + text_size
+
+## TIFF and sized for Science Journal
+setwd(paste0(saa_result_dir,"/_PLOTS"))
+tiff("Spauto-all-samples-unrelated-MvsF.tif",width = 12, height = 12, unit='cm', res=1200)
+ggarrange(A2,B2,
+          labels = c("A","B"),
+          ncol = 1, nrow = 2)
+dev.off()
+
+
+```
+
+```{r SAA - North & Central regions only}
+
+# Load unrelated data
+setwd(output_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+
+# Region = North-Central
+
+data2 <- gl.merge.pop(data, old = c("North","Central"), new = "North-Central")
+data3 <- gl.keep.pop(data2,pop.list = "North-Central",recalc = TRUE,mono.rm = TRUE)
+pop_name1 <- "North-Central"
+
+# Examine distribution of euclidian distances between samples
+dist_matrix <- distm(as.data.frame(cbind(data3$other$latlon$lon,data3$other$latlon$lat)))
+dist_df <- data.frame(value = c(dist_matrix))
+
+setwd(paste0(saa_result_dir,"/_PLOTS"))
+jpeg(paste("Histogram-euclidian-geo-distances-",pop_name1,".jpg",sep = ""), width = 500, height = 300)
+hist(dist_df)
+dev.off()
+
+# Run SAA
+spauto <- gl.spatial.autoCorr(data3,coordinates = "latlon",bins = c(0,2500,5000,10000,20000,35000,47000),reps = 9999,permutation = TRUE,bootstrap = TRUE)
+
+# Format result
+spauto2 <- as.data.frame(spauto$`North-Central`)
+spauto2$Bin_km <- spauto2$Bin / 1000
+
+# Save the results
+setwd(saa_result_dir)
+write.csv(spauto2,file = paste("Spauto-results-unrelated-",pop_name1,".csv",sep = ""))
+
+# Create scatterplot with error bars (error bars are the 95% confidence intervals around each value of 'r' calculated, based on bootstrapping)
+A <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey")+
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  scale_x_continuous(breaks = spauto2$Bin_km)+
+  labs(x = "Distance class (km)",y = "r (corrected)",title = paste(pop_name1)) +
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null), alpha = 0.3, fill = "#22908C") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "#22908C") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "#22908C")
+A
+
+
+
+# Region = Central only
+
+data3 <- gl.keep.pop(data,pop.list = "Central",recalc = TRUE,mono.rm = TRUE)
+pop_name2 <- "Central"
+              
+# Examine distribution of euclidian distances between samples
+dist_matrix <- distm(as.data.frame(cbind(data3$other$latlon$lon,data3$other$latlon$lat)))
+dist_df <- data.frame(value = c(dist_matrix))
+
+setwd(paste0(saa_result_dir,"/_PLOTS"))
+jpeg(paste("Histogram-euclidian-geo-distances-",pop_name2,".jpg",sep = ""), width = 500, height = 300)
+hist(dist_df)
+dev.off()
+
+# Run SAA
+spauto <- gl.spatial.autoCorr(data3,coordinates = "latlon",bins = c(0,1000,3000,6000,9000,12000,16500),reps = 9999,permutation = TRUE,bootstrap = TRUE)
+
+# Format results
+spauto2 <- as.data.frame(spauto$`Central`)
+spauto2$Bin_km <- spauto2$Bin / 1000
+
+# Save the results
+setwd(saa_result_dir)
+write.csv(spauto2,file = paste("Spauto-results-unrelated-",pop_name2,".csv",sep = ""))
+
+# Create scatterplot with error bars (error bars are the 95% confidence intervals around each value of 'r' calculated, based on bootstrapping)
+B <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey")+
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  scale_x_continuous(breaks = spauto2$Bin_km)+
+  labs(x = "Distance class (km)",y = "r (corrected)",title = paste(pop_name2)) +
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null), alpha = 0.3, fill = "#22908C") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "#22908C") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "#22908C")
+B
+
+# Save plot for publication
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.position = "none") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8, angle = 45, hjust = 1), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6))
+
+A2 <- A + plot_margin + plot_theme + text_size
+B2 <- B + plot_margin + plot_theme + text_size
+
+## TIFF and sized for Science Journal
+setwd(paste0(saa_result_dir,"/_PLOTS"))
+tiff(paste("Spauto-unrelated-",pop_name1,".tif", sep=""),width = 12, height = 6, unit='cm', res=300)
+ggarrange(A2,
+          labels = c(""),
+          ncol = 1, nrow = 1)
+dev.off()
+tiff(paste("Spauto-unrelated-",pop_name2,".tif", sep=""),width = 12, height = 6, unit='cm', res=300)
+ggarrange(B2,
+          labels = c(""),
+          ncol = 1, nrow = 1)
+dev.off()
+
+
+
+
+# FEMALES
+
+data$pop <- as.factor(data@other$ind.metrics$sex)
+data2 <- gl.keep.pop(data,pop.list = "F",recalc = TRUE,mono.rm = TRUE)
+
+# Convert back to pop and subset for target pop
+data2$pop <- as.factor(data2@other$ind.metrics$pop)
+data3 <- gl.keep.pop(data2,pop.list = "Central",recalc = TRUE,mono.rm = TRUE)
+pop_name <- "Central"
+
+# Examine distribution of euclidian distances between samples
+dist_matrix <- distm(as.data.frame(cbind(data3$other$latlon$lon,data3$other$latlon$lat)))
+dist_df <- data.frame(value = c(dist_matrix))
+
+setwd(paste0(saa_result_dir,"/_PLOTS"))
+jpeg(paste("Histogram-euclidian-geo-distances-females-",pop_name,".jpg",sep = ""), width = 500, height = 300)
+hist(dist_df)
+dev.off()
+
+# Run SAA
+spauto <- gl.spatial.autoCorr(data3,coordinates = "latlon",bins = c(0,2000,6000,9000,12000,16500),reps = 9999,permutation = TRUE,bootstrap = TRUE)
+
+# Format results
+spauto2 <- as.data.frame(spauto$Central)
+spauto2$Bin_km <- spauto2$Bin / 1000
+
+# Save the results
+setwd(saa_result_dir)
+write.csv(spauto2,file = paste("Spauto-results-unrelated-females-",pop_name,".csv",sep = ""))
+
+# Create scatterplot with error bars (error bars are the 95% confidence intervals around each value of 'r' calculated, based on bootstrapping)
+A <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey")+
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  scale_x_continuous(breaks = spauto2$Bin_km)+
+  labs(x = "Distance class (km)",y = "r (corrected)",title = paste(pop_name,"females",sep=" ")) +
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null), alpha = 0.3, fill = "#FFCD00") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "#FFCD00") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "#FFCD00")
+A
+
+
+
+# MALES
+
+data$pop <- as.factor(data@other$ind.metrics$sex)
+data2 <- gl.keep.pop(data,pop.list = "M",recalc = TRUE,mono.rm = TRUE)
+
+# Convert back to pop and subset for target pop
+data2$pop <- as.factor(data2@other$ind.metrics$pop)
+data3 <- gl.keep.pop(data2,pop.list = "Central",recalc = TRUE,mono.rm = TRUE)
+pop_name <- "Central"
+
+# Examine distribution of euclidian distances between samples
+dist_matrix <- distm(as.data.frame(cbind(data3$other$latlon$lon,data3$other$latlon$lat)))
+dist_df <- data.frame(value = c(dist_matrix))
+
+setwd(paste0(saa_result_dir,"/_PLOTS"))
+jpeg(paste("Histogram-euclidian-geo-distances-males-",pop_name,".jpg",sep = ""), width = 500, height = 300)
+hist(dist_df)
+dev.off()
+
+# Run SAA
+spauto <- gl.spatial.autoCorr(data3,coordinates = "latlon",bins = c(0,2000,6000,9000,12000,16500),reps = 9999,permutation = TRUE,bootstrap = TRUE)
+
+# Format results
+spauto2 <- as.data.frame(spauto$Central)
+spauto2$Bin_km <- spauto2$Bin / 1000
+
+# Save the results
+setwd(saa_result_dir)
+write.csv(spauto2,file = paste("Spauto-results-unrelated-males-",pop_name,".csv",sep = ""))
+
+# Create scatterplot with error bars (error bars are the 95% confidence intervals around each value of 'r' calculated, based on bootstrapping)
+B <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey")+
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  scale_x_continuous(breaks = spauto2$Bin_km)+
+  labs(x = "Distance class (km)",y = "r (corrected)",title = paste(pop_name,"males",sep=" ")) +
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null), alpha = 0.3, fill = "#00843D") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "#00843D") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "#00843D")
+B
+
+# Save plot for publication
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.position = "none") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8, angle = 45, hjust = 1), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6))
+
+A2 <- A + plot_margin + plot_theme + text_size
+B2 <- B + plot_margin + plot_theme + text_size
+
+## TIFF and sized for Science Journal
+setwd(paste0(saa_result_dir,"/_PLOTS"))
+tiff("Spauto-all-samples-unrelated-MvsF-CentralPop.tif",width = 12, height = 12, unit='cm', res=1200)
+ggarrange(A2,B2,
+          labels = c("A","B"),
+          ncol = 1, nrow = 2)
+dev.off()
+
+
+```
+
+```{r SAA for Appendix}
+
+# All samples plot
+setwd(saa_result_dir)
+spauto2 <- read.csv(file = "spauto_results-all-samples-unrelated.csv", header = TRUE)
+
+# create scatterplot with error bars (error bars are the 95% confidence intervals around each value of 'r' calculated, based on bootstrapping)
+A <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey")+
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  scale_x_continuous(breaks = spauto2$Bin_km)+
+  labs(x = "Distance class (km)",y = "r (corrected)", title = "All regions") + 
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null), alpha = 0.3, fill = "grey30") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "grey30") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "grey30")
+A
+
+# All samples Females plot
+setwd(saa_result_dir)
+spauto2 <- read.csv(file = "spauto_results-all-samples-unrelated-females.csv", header = TRUE)
+
+B <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey")+
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  scale_x_continuous(breaks = spauto2$Bin_km)+
+  labs(x = "Distance class (km)",y = "r (corrected)", title = "Females") + 
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null), alpha = 0.3, fill = "#FFCD00") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "#FFCD00") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "#FFCD00")
+B
+
+# All samples Males plot
+setwd(saa_result_dir)
+spauto2 <- read.csv(file = "spauto_results-all-samples-unrelated-males.csv", header = TRUE)
+
+C <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey")+
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  scale_x_continuous(breaks = spauto2$Bin_km)+
+  labs(x = "Distance class (km)",y = "r (corrected)", title = "Males") + 
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null), alpha = 0.3, fill = "#00843D") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "#00843D") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "#00843D")
+C
+
+
+# Central only plot
+setwd(saa_result_dir)
+spauto2 <- read.csv(file = "spauto-results-unrelated-Central.csv", header = TRUE)
+
+# create scatterplot with error bars (error bars are the 95% confidence intervals around each value of 'r' calculated, based on bootstrapping)
+D <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey")+
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  scale_x_continuous(breaks = spauto2$Bin_km)+
+  labs(x = "Distance class (km)",y = "r (corrected)", title = "Central region") + 
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null), alpha = 0.3, fill = "grey30") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "grey30") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "grey30")
+D
+
+# Central Females plot
+setwd(saa_result_dir)
+spauto2 <- read.csv(file = "spauto-results-unrelated-females-Central.csv", header = TRUE)
+
+E <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey")+
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  scale_x_continuous(breaks = spauto2$Bin_km)+
+  labs(x = "Distance class (km)",y = "r (corrected)", title = "Females") + 
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null), alpha = 0.3, fill = "#FFCD00") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "#FFCD00") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "#FFCD00")
+E
+
+# Central Males plot
+setwd(saa_result_dir)
+spauto2 <- read.csv(file = "spauto-results-unrelated-males-Central.csv", header = TRUE)
+
+F1 <- ggplot(spauto2, aes(x = Bin_km, y = r)) +
+  geom_hline(yintercept = 0, linetype = "solid", color = "grey")+
+  geom_point() +
+  geom_line() +
+  geom_errorbar(aes(ymin = L.r, ymax = U.r)) +
+  scale_x_continuous(breaks = spauto2$Bin_km)+
+  labs(x = "Distance class (km)",y = "r (corrected)", title = "Males") + 
+  geom_ribbon(aes(ymin = L.r.null, ymax = U.r.null), alpha = 0.3, fill = "#00843D") +
+  geom_line(aes(y = L.r.null), linetype = "dashed", color = "#00843D") +
+  geom_line(aes(y = U.r.null), linetype = "dashed", color = "#00843D")
+F1
+
+
+# Save plot for publication
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.position = "none") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8, angle = 45, hjust = 1), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6))
+
+A2 <- A + plot_margin + plot_theme + text_size
+B2 <- B + plot_margin + plot_theme + text_size
+C2 <- C + plot_margin + plot_theme + text_size
+D2 <- D + plot_margin + plot_theme + text_size
+E2 <- E + plot_margin + plot_theme + text_size
+F2 <- F1 + plot_margin + plot_theme + text_size
+
+## TIFF and sized for Science Journal
+setwd(paste0(saa_result_dir,"/_PLOTS"))
+tiff("BTF-SAA-for-Appendix.tif",width = 17.5, height = 18, unit='cm', res=300)
+ggarrange(A2,D2,B2,E2,C2,F2,
+          labels = c("A","B","","","",""),
+          ncol = 2, nrow = 3)
+dev.off()
+
+
+```
+
+## 3.8 Spatial Principal Components Analysis (sPCA)
+
+```{r sPCA}
+
+# Load unrelated data
+setwd(output_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+
+# check no. samples per site
+table(data$pop)
+
+# Random subset of snps to reduce computation time
+data <- gl.subsample.loci(data,n = 5000,method = "random",mono.rm = TRUE)
+data2 <- gl2gi(data)
+
+# Swap latlong to longlat
+latlong <- data2$other$latlon
+longlat <- as.data.frame(cbind(latlong$lon,latlong$lat))
+colnames(longlat) <- c("lon","lat")
+rownames(longlat) <- rownames(latlong)
+
+# Add minor random noise to the latitude and longitude values (for mapping purposes, otherwise interpolations won't work later)
+longlat$lon <- jitter(longlat$lon, factor = 0.1)
+longlat$lat <- jitter(longlat$lat, factor = 0.1)
+data2$other$latlon <- longlat
+
+# Save the genind object
+setwd(spca_result_dir)
+saveRDS(data2, "BTF-3-107-5000-neutral-unrel-subset.RData")
+
+### ANALYSIS
+
+# Mantel test
+data_norm <- scaleGen(data2,center = TRUE, scale = TRUE, NA.method = "mean")
+mtest <- mantel.randtest(dist(data_norm), dist(data2$other$latlon))
+
+plot(mtest, nclass=30)
+plot(dist(data2$other$latlon),dist(data_norm))
+
+setwd(spca_result_dir)
+sink(file = "Mantel-test-unrel.txt")
+cat(print(mtest))
+sink()
+
+
+# sPCA type 7
+# All sites are neighbours, but the spatial weights are directly proportional to the inversed spatial distances). a = exponent used for type 7. dmin = the minimum distance between any two distinct points. Used to avoid infinite spatial proximities. We retain the top 10 global and top 10 local eigenvectors, but you can set scannf to TRUE and ask to TRUE to choose these yourself based on the graph
+mySpca <- adegenet::spca(obj=data2,xy = data2@other$latlon, ask = FALSE, type = 7, a = 2, dmin = 0, scannf=FALSE, nfposi = 10, nfnega = 10)
+
+# Save the sPCA object
+setwd(spca_result_dir)
+saveRDS(mySpca, file="sPCA-object-type7-exp2-unrel-5000loci.rds")
+
+# Import sPCA object
+setwd(spca_result_dir)
+mySpca <- readRDS("sPCA-object-type7-exp2-unrel-5000loci.rds")
+name <- "BTF-3-107-5000-neutral-unrel"
+type <- "Type7"
+
+# Import the saved genind object that was used to run the sPCA
+setwd(spca_result_dir)
+data2 <- readRDS("BTF-3-107-5000-neutral-unrel-subset.RData")
+
+# Save the results of the sPCA
+results <- summary(mySpca) # Takes around 30 min for 5000 loci
+setwd(spca_result_dir)
+write.csv(results$pca, file = paste(name,type,"results-pca.csv",sep="-"))
+write.csv(results$spca, file = paste(name,type,"results-spca.csv",sep="-"))
+write.csv(mySpca$as, file = paste(name,type,"sPCA-vs-PCA-axes.csv",sep="-"))
+sink(file = paste(name,type,"results-Istat.txt",sep="-"))
+cat(print(results$Istat))
+sink()
+
+# Screeplot - plot variance vs I for each eigenvalue.
+setwd(paste0(spca_result_dir,"/_PLOTS"))
+jpeg(filename = paste(name,type,"screeplot.jpg",sep="-"))
+screeplot(mySpca) # Takes around 30 min for 5000 loci
+dev.off()
+
+# Multi plot
+setwd(paste0(spca_result_dir,"/_PLOTS"))
+jpeg(filename = paste(name,type,"multiplot.jpg",sep="-"),width = 600, height = 800)
+plot(mySpca)
+dev.off()
+
+# Save the global and local stats tests
+data_norm <- scaleGen(data2,center = TRUE, scale = TRUE, NA.method = "mean")
+myGtest <- global.rtest(data_norm,mySpca$lw,nperm=999)
+myLtest <- local.rtest(data_norm,mySpca$lw,nperm=999)
+
+setwd(spca_result_dir)
+sink(paste(name,type,"results-Gtest.txt",sep="-"))
+cat(print(myGtest))
+sink()
+sink(paste(name,type,"results-Ltest.txt",sep="-"))
+cat(print(myLtest))
+sink()
+
+```
+
+```{r sPCA plot for Appendix}
+
+# Import sPCA object
+setwd(spca_result_dir)
+mySpca <- readRDS("sPCA-object-type7-exp2-unrel-5000loci.rds")
+name <- "BTF-3-107-5000-neutral-unrel"
+type <- "Type7"
+
+# Import the saved genind object that was used to run the sPCA
+setwd(spca_result_dir)
+data2 <- readRDS("BTF-3-107-5000-neutral-unrel-subset.RData")
+data2
+
+# Mapping shapefile
+map_dir <- paste0(getwd(),"/figures/Fig1-combined-map-structure/Aus_States")
+
+# Plot eigenvalues by their I and variance
+setwd(spca_result_dir)
+scree_data <- read.csv(file = paste(name,type,"results-spca.csv",sep="-"), header = TRUE)
+
+n_colors <- length(scree_data$eig)
+color_palette <- colorRampPalette(brewer.pal(n_colors, "RdBu"))
+
+A <- ggplot(data = scree_data, aes(x = var, y = moran, color = eig))+
+  geom_point(size = 1)+
+  scale_color_gradientn(colors = color_palette(n_colors))+
+  labs(x = "Variance", y = expression(paste("Moran's ", italic(I))))+
+  geom_point(data = scree_data, aes(x = var[1], y = moran[1]),color = "black", pch = 1, size = 3)
+A
+
+# Plot of eigenvalues in order of most positive to most negative
+
+B <- ggplot(data = scree_data, aes(x = 1:nrow(scree_data), y = eig)) +
+  geom_linerange(aes(ymin = 0, ymax = eig, color = eig), size = 0.5) +
+  scale_color_gradientn(colors = color_palette(n_colors), na.value = "grey50") +
+  geom_hline(yintercept = 0, col = "grey") +
+  labs(x = "Eigenvector", y = "Score")
+B
+
+# Map of interpolated ls (lagged scores). Using the lagged principal scores (ls) rather than the original scores (li) gives better clarity of genetic clines.
+
+# Load the shapefile
+setwd(map_dir)
+aus_basins_map <- readOGR("georef-australia-state-millesime.shp")
+g_fort = fortify(aus_basins_map)
+
+x <- data2$other$latlon[,1]
+y <- data2$other$latlon[,2]
+
+interpX <- seq(min(x),max(x),le=200)
+interpY <- seq(min(y),max(y),le=200)
+gdat_interp <- interp(x, y, mySpca$ls[,1], xo=interpX, yo=interpY)
+gdat <- interp2xyz(gdat_interp, data.frame = TRUE)
+gdat
+
+# For plotting min and max x and y on the map plot, set the limits based on the lat and long coordinates, but add a small margin
+margin_x <- (max(x) - min(x)) * 0.60  # e.g. 0.05 = 5% of the range of x
+margin_y <- (max(y) - min(y)) * 0.05  # e.g. 0.05 = 5% of the range of y
+
+# Create a ggplot map and add the points of samples based on longitude and latitude
+C = ggplot() +
+  geom_polygon(data=g_fort,aes(x=long,y=lat,group=group), fill='transparent',color = "black")+
+  coord_equal()+
+  geom_tile(data = gdat, aes(x = x, y = y, z = z, fill = z))+
+  geom_contour(data = gdat, aes(x = x, y = y, z = z), color = "white", alpha = 0.5) + 
+  scale_fill_distiller(palette="Spectral", na.value=alpha("white", alpha=0))+
+  geom_polygon(data=g_fort,aes(x=long,y=lat,group=group), fill='transparent',color = "gray40")+
+  geom_point(data = data2$other$latlon, aes(x = lon, y = lat), color = "black", size = 1)+
+  labs(x = "Longitude", y = "Latitude")+
+  xlim(min(x) - margin_x, max(x) + margin_x) + # remove this if you want to plot all of Australia
+  ylim(min(y) - margin_y, max(y) + margin_y) # remove this if you want to plot all of Australia
+C
+
+# Save plot for publication
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.position = "none") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8,angle = 45, hjust = 1), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6))
+
+A2 <- A + plot_margin + plot_theme + text_size
+B2 <- B + plot_margin + plot_theme + text_size
+C2 <- C + plot_margin + plot_theme + text_size
+
+setwd(paste0(spca_result_dir,"/_PLOTS"))
+tiff("Neutral-sPCA-type7-unrelated-plotA.tif",width = 5.5, height = 10, unit='cm', res=1200)
+ggarrange(C2,
+          labels = c("B"),
+          ncol = 1, nrow = 1)
+dev.off()
+
+setwd(paste0(spca_result_dir,"/_PLOTS"))
+tiff("Neutral-sPCA-type7-unrelated-plotB-C.tif",width = 7.5, height = 10, unit='cm', res=1200)
+ggarrange(A2,B2,
+          labels = c("C","D"),
+          ncol = 1, nrow = 2)
+dev.off()
+
+```
+
+## 3.9 Sex-biased dispersal tests
+
+```{r Sex bias dispersal tests}
+
+# Load unrelated data
+setwd(output_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+
+### REGIONS AS 'POPS'
+
+# Exclude samples with inconsistent or uncertain sex results
+data$pop <- as.factor(data$other$ind.metrics$sex)
+data2 <- gl.keep.pop(data, pop.list = c("F","M"),recalc = TRUE,mono.rm = TRUE)
+
+# Check samples sizes
+data_males <- gl.keep.pop(data2,pop.list = "M",recalc = TRUE,mono.rm = TRUE)
+data_males$pop <- as.factor(data_males$other$ind.metrics$pop)
+table(data_males$pop)
+data_females <- gl.keep.pop(data2,pop.list = "F",recalc = TRUE,mono.rm = TRUE)
+data_females$pop <- as.factor(data_females$other$ind.metrics$pop)
+table(data_females$pop)
+
+# Convert pop back to region for full dataset
+data2$pop <- as.factor(data2@other$ind.metrics$pop)
+
+# Convert to hierfstat format
+data_geno2 <- genind2hierfstat(gl2gi(data2))
+
+# Extract sex from the original genlight object
+data_sex <- data2$other$ind.metrics$sex
+
+# Confirm order is the same for individuals
+rownames(data_geno2) == data2$other$ind.metrics$id
+
+# Corrected mean assignment indexes
+aic<-AIc(data_geno2)
+boxplot(aic~data_sex)
+
+# Convert AIc to dataframe
+aic_df <- as.data.frame(aic)
+aic_df <- cbind(rownames(data_geno2),data_sex,aic_df)
+colnames(aic_df) <- c("id","sex","aic")
+
+# Save the dataframe
+setwd(sexbias_result_dir)
+write.csv(aic_df, file = "sexbiastests-aicdf-unrel-regions.csv",row.names = FALSE)
+
+# Sex-biased test two-sided tests
+maic_test <- sexbias.test(data_geno2,data_sex,nperm = 100,test = "mAIc",alternative = "two.sided")
+vaic_test <- sexbias.test(data_geno2,data_sex,nperm = 100,test = "vAIc",alternative = "two.sided")
+fis_test <- sexbias.test(data_geno2,data_sex,nperm = 100,test = "FIS",alternative = "two.sided")
+fst_test <- sexbias.test(data_geno2,data_sex,nperm = 100,test = "FST",alternative = "two.sided")
+
+# Save results
+setwd(sexbias_result_dir)
+sink("sexbiastests-two-sided-results-unrel-regions.txt")
+cat("Sample sizes\n\n")
+print(table(data2$pop))
+cat("\n")
+print(table(data2$other$ind.metrics$sex))
+cat("\n\n")
+cat("mAIc\n\n")
+print(maic_test)
+cat("\n")
+cat("vAIc\n\n")
+print(vaic_test)
+cat("\n")
+cat("Fis\n\n")
+print(fis_test)
+cat("\n")
+cat("Fst\n\n")
+print(fst_test)
+cat("\n")
+sink()
+
+
+### SITES AS 'POP'
+
+# Check sample sizes per site for each sex
+data_males$pop <- as.factor(data_males$other$ind.metrics$site_code)
+table(data_males$pop)
+data_females$pop <- as.factor(data_females$other$ind.metrics$site_code)
+table(data_females$pop)
+
+# Set pop to site locations
+data2$pop <- as.factor(data2@other$ind.metrics$site_code)
+
+# Remove any sites that have <2 males or <2 females, and any sites that only have one sex, using gl.drop.pop or gl.keep.pop
+data3 <- gl.drop.pop(data2, pop.list = c("BR","SA","SWTM"),recalc = TRUE,mono.rm = TRUE)
+
+# Final number of males and females for this test
+table(data3$other$ind.metrics$sex)
+
+# Convert to hierfstat format
+data_geno2 <- genind2hierfstat(gl2gi(data3))
+
+# Extract sex from the original genlight object
+data_sex <- data3$other$ind.metrics$sex
+
+# Confirm order is the same for individuals
+rownames(data_geno2) == data3$other$ind.metrics$id
+
+# Samples per sex per site
+table(data3$pop, data3$other$ind.metrics$sex)
+
+# Corrected mean assignment indexes
+aic<-AIc(data_geno2) # This can take a while for large datasets
+boxplot(aic~data_sex)
+
+# Convert AIc to dataframe
+aic_df <- as.data.frame(aic)
+aic_df <- cbind(rownames(data_geno2),data_sex,aic_df)
+colnames(aic_df) <- c("id","sex","aic")
+
+# Save the dataframe
+setwd(sexbias_result_dir)
+write.csv(aic_df, file = "sexbiastests-aicdf-unrel-sites.csv",row.names = FALSE)
+
+# Sex-biased test two-sided tests
+maic_test <- sexbias.test(data_geno2,data_sex,nperm = 100,test = "mAIc",alternative = "two.sided")
+vaic_test <- sexbias.test(data_geno2,data_sex,nperm = 100,test = "vAIc",alternative = "two.sided")
+fis_test <- sexbias.test(data_geno2,data_sex,nperm = 100,test = "FIS",alternative = "two.sided")
+fst_test <- sexbias.test(data_geno2,data_sex,nperm = 100,test = "FST",alternative = "two.sided")
+
+# Save results
+setwd(sexbias_result_dir)
+sink("sexbiastests-two-sided-results-unrel-sites.txt")
+cat("Sample sizes\n\n")
+print(table(data3$pop))
+cat("\n")
+print(table(data3$other$ind.metrics$sex))
+cat("\n\n")
+cat("mAIc\n\n")
+print(maic_test)
+cat("\n")
+cat("vAIc\n\n")
+print(vaic_test)
+cat("\n")
+cat("Fis\n\n")
+print(fis_test)
+cat("\n")
+cat("Fst\n\n")
+print(fst_test)
+cat("\n")
+sink()
+
+```
+
+## 3.10 Kinship
+
+```{r Kinship - format kinship data}
+
+# Load unrelated data
+setwd(output_data_dir)
+data <- readRDS("BTF-3-107-14788-neutral-auto-sex-unrel.RData")
+
+# Read in the updated kinship data from the PC-AiR/PCRelate analysis, accounting for genetic structure.
+setwd(pcairelate_result_dir)
+kin_df <- read.csv("PCRelate-updated-kinship-dataframe-iteration2.csv",header = TRUE)
+
+# Read in list of 'unrelated' samples
+setwd(pcairelate_result_dir)
+unrel_metadata <- read.csv("BTF-final-samples-metadata-unrelated.csv", header = TRUE)
+unrel_samples <- unrel_metadata$id
+
+# Remove highly related samples from kin_df
+kin_df2 <- kin_df %>% filter(ID1 %in% unrel_samples & ID2 %in% unrel_samples)
+
+# Add pairwise sample metadata to the kinship dataframe
+
+# Get the sample metadata from the genlight object
+meta_data <- data$other$ind.metrics
+
+# For each pair of samples, if the 'site_code' column matches, then write 'Within_sites' in the new column 'Kinship_Site_Label', but if not write 'Between_sites'
+site_a <- meta_data$site_code[match(kin_df2$ID1, meta_data$id)] # Get the Site values for sample A and sample B in meta_data
+site_b <- meta_data$site_code[match(kin_df2$ID2, meta_data$id)]
+kin_df2$Kinship_Site_Label <- ifelse(site_a == site_b, "Within-sites", "Between-sites") # Create a new column in kin_df2 based on the Site values
+
+# Repeat for regions
+region_a <- meta_data$pop[match(kin_df2$ID1, meta_data$id)]
+region_b <- meta_data$pop[match(kin_df2$ID2, meta_data$id)]
+kin_df2$Kinship_Region_Label <- ifelse(region_a == region_b, "Within-regions", "Between-regions")
+
+# More specific region labels
+kin_df2$Kinship_Region2_Label <- ifelse(
+  region_a == "North" & region_b == "North", "North", 
+  ifelse(region_a == "South" & region_b == "South", "South",
+         ifelse(region_a == "Central" & region_b == "Central", "Central", "Between-regions")))
+
+# Add sex information to the kinship dataframe
+sex_a <- meta_data$sex[match(kin_df2$ID1, meta_data$id)]
+sex_b <- meta_data$sex[match(kin_df2$ID2, meta_data$id)]
+kin_df2$Kinship_Sex_Label <- ifelse(
+  sex_a == "F" & sex_b == "F", "Between-females", 
+  ifelse(sex_a == "M" & sex_b == "M", "Between-males", "Between-sexes"))
+
+# Add Survey info
+survey_a <- meta_data$survey[match(kin_df2$ID1, meta_data$id)]
+survey_b <- meta_data$survey[match(kin_df2$ID2, meta_data$id)]
+kin_df2$Kinship_Survey_Label <- ifelse(survey_a == survey_b, "Within-surveys", "Between-surveys")
+
+# Add Season info
+season_a <- meta_data$season[match(kin_df2$ID1, meta_data$id)]
+season_b <- meta_data$season[match(kin_df2$ID2, meta_data$id)]
+kin_df2$Kinship_Season_Label <- ifelse(season_a == season_b, "Within-seasons", "Between-seasons")
+
+# Add specific season labels (MODIFY THIS TO SUIT YOUR OWN SPECIFIC POPS OR REGIONS)
+kin_df2$Kinship_Season2_Label <- ifelse(
+  season_a == "Dry" & season_b == "Dry", "Dry", 
+  ifelse(season_a == "Early Wet" & season_b == "Early Wet", "Early Wet",
+         ifelse(season_a == "Wet" & season_b == "Wet", "Wet", "Between-seasons")))
+
+# Plot mean and 95% Confidence intervals
+A <- ggplot(kin_df2, aes(x = Kinship_Site_Label, y = kin, color = Kinship_Site_Label)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "errorbar", width = 0.2) + # Add a mean layer with 95% confidence intervals
+  stat_summary(fun.y = "mean", geom = "point", size = 3, shape = 20, fill = "white") + # Add a point layer for the mean value
+  labs(x = "Group", y = "Mean kinship") +
+  scale_color_manual(values = c("red", "blue"), name = "Group")   # change colours of groups
+A
+
+B <- ggplot(kin_df2, aes(x = Kinship_Region_Label, y = kin, color = Kinship_Region_Label)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "errorbar", width = 0.2) + # Add a mean layer with 95% confidence intervals
+  stat_summary(fun.y = "mean", geom = "point", size = 3, shape = 20, fill = "white") + # Add a point layer for the mean value
+  labs(x = "Group", y = "Mean kinship") +
+  scale_color_manual(values = c("red", "blue"), name = "Group")   # change colours of groups
+B
+
+C <- ggplot(kin_df2, aes(x = Kinship_Sex_Label, y = kin, color = Kinship_Sex_Label)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "errorbar", width = 0.2) + # Add a mean layer with 95% confidence intervals
+  stat_summary(fun.y = "mean", geom = "point", size = 3, shape = 20, fill = "white") + # Add a point layer for the mean value
+  labs(x = "Group", y = "Mean kinship") +
+  scale_color_manual(values = c("red", "blue","green"), name = "Group")   # change colours of groups
+C
+
+D <- ggplot(kin_df2, aes(x = Kinship_Sex_Label, y = kin, color = Kinship_Sex_Label)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "errorbar", width = 0.2) + # Add a mean layer with 95% confidence intervals
+  stat_summary(fun.y = "mean", geom = "point", size = 3, shape = 20, fill = "white") + # Add a point layer for the mean value
+  labs(x = "Group", y = "Mean kinship") +
+  scale_color_manual(values = c("red", "blue","green"), name = "Group")+
+  facet_grid(~ Kinship_Region2_Label)
+D
+
+E <- ggplot(kin_df2, aes(x = Kinship_Survey_Label, y = kin, color = Kinship_Survey_Label)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "errorbar", width = 0.2) + # Add a mean layer with 95% confidence intervals
+  stat_summary(fun.y = "mean", geom = "point", size = 3, shape = 20, fill = "white") + # Add a point layer for the mean value
+  labs(x = "Group", y = "Mean kinship") +
+  scale_color_manual(values = c("red", "blue"), name = "Group")   # change colours of groups
+E
+
+F1 <- ggplot(kin_df2, aes(x = Kinship_Season_Label, y = kin, color = Kinship_Season_Label)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "errorbar", width = 0.2) + # Add a mean layer with 95% confidence intervals
+  stat_summary(fun.y = "mean", geom = "point", size = 3, shape = 20, fill = "white") + # Add a point layer for the mean value
+  labs(x = "Group", y = "Mean kinship") +
+  scale_color_manual(values = c("red", "blue"), name = "Group")   # change colours of groups
+F1
+
+G <- ggplot(kin_df2, aes(x = Kinship_Season2_Label, y = kin, color = Kinship_Season2_Label)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "errorbar", width = 0.2) + # Add a mean layer with 95% confidence intervals
+  stat_summary(fun.y = "mean", geom = "point", size = 3, shape = 20, fill = "white") + # Add a point layer for the mean value
+  labs(x = "Group", y = "Mean kinship") +
+  scale_color_manual(values = c("red", "blue","green","yellow"), name = "Group")+
+  facet_grid(~ Kinship_Region2_Label)
+G
+
+# Add pairwise geographic distance to the kinship dataframe
+
+# Get lat long dataframe
+df <- data$other$latlon
+
+# Create an empty dataframe to store the results
+geodist_df <- data.frame(Sample1 = character(), Sample2 = character(), Distance = numeric(), stringsAsFactors = FALSE)
+
+# Get all combinations of row indices
+row_combinations <- combn(nrow(df), 2)
+
+# Iterate through each combination and calculate the distance
+for (i in 1:ncol(row_combinations)) {
+  sample1 <- rownames(df)[row_combinations[1, i]]
+  sample2 <- rownames(df)[row_combinations[2, i]]
+  coords1 <- c(df[sample1, "lon"], df[sample1, "lat"])
+  coords2 <- c(df[sample2, "lon"], df[sample2, "lat"])
+  distance <- distGeo(coords1, coords2)
+  
+  # Add the results to the dataframe
+  geodist_df <- rbind(geodist_df, data.frame(Sample1 = sample1, Sample2 = sample2, Distance = distance))
+}
+
+# Change from meters to kilometers
+geodist_df$Distance_km <- round((geodist_df$Distance/1000),3)
+
+# Merge geodist_df and kin_data based on sample IDs
+kin_df3 <- merge(geodist_df, kin_df2, by.x = c("Sample1", "Sample2"), by.y = c("ID1", "ID2"))
+
+D <- ggplot(data = kin_df3, mapping = aes(x = Distance_km, y = kin, col = Kinship_Region_Label))+
+  geom_point()+
+  geom_smooth(method='lm',se=T)
+D
+
+# Save the updated kinship dataframe with metadata
+setwd(kinship_result_dir)
+write.csv(kin_df3,file="PostPcair-KING-kinship-coeffs-with-metadata-unrel.csv", row.names = FALSE)
+
+```
+
+```{r Kinship - stats}
+
+# Import kinship dataframe with metadata added
+setwd(kinship_result_dir)
+kin_df <- read.csv(file = "PostPcair-KING-kinship-coeffs-with-metadata-unrel.csv",header = TRUE)
+
+# SEXES
+
+# Calculate means and 95% C.I.'s
+summary_stats <- kin_df %>%
+  dplyr::group_by(Kinship_Sex_Label) %>%
+  dplyr::summarize(mean_value = mean(kin, na.rm = TRUE),
+            ci_lower = mean_value - 1.96 * std.error(kin, na.rm = TRUE),
+            ci_upper = mean_value + 1.96 * std.error(kin, na.rm = TRUE)) %>%
+  ungroup()
+summary_stats
+
+# save results
+setwd(kinship_result_dir)
+write.csv(summary_stats,file = "Mean-kinship-unrel-SEXES.csv",row.names = FALSE)
+
+# SITES
+
+# Calculate means and 95% C.I.'s
+summary_stats <- kin_df %>%
+  dplyr::group_by(Kinship_Site_Label) %>%
+  dplyr::summarize(mean_value = mean(kin, na.rm = TRUE),
+            ci_lower = mean_value - 1.96 * std.error(kin, na.rm = TRUE),
+            ci_upper = mean_value + 1.96 * std.error(kin, na.rm = TRUE)) %>%
+  ungroup()
+summary_stats
+
+# save results
+setwd(kinship_result_dir)
+write.csv(summary_stats,file = "Mean-kinship-unrel-SITES.csv",row.names = FALSE)
+
+# REGIONS
+
+# Calculate means and 95% C.I.'s
+summary_stats <- kin_df %>%
+  dplyr::group_by(Kinship_Region_Label) %>%
+  dplyr::summarize(mean_value = mean(kin, na.rm = TRUE),
+            ci_lower = mean_value - 1.96 * std.error(kin, na.rm = TRUE),
+            ci_upper = mean_value + 1.96 * std.error(kin, na.rm = TRUE)) %>%
+  ungroup()
+summary_stats
+
+# save results
+setwd(kinship_result_dir)
+write.csv(summary_stats,file = "Mean-kinship-unrel-REGIONS.csv",row.names = FALSE)
+
+# REGIONS SPECIFIC
+
+# Calculate means and 95% C.I.'s
+summary_stats <- kin_df %>%
+  dplyr::group_by(Kinship_Region2_Label) %>%
+  dplyr::summarize(mean_value = mean(kin, na.rm = TRUE),
+            ci_lower = mean_value - 1.96 * std.error(kin, na.rm = TRUE),
+            ci_upper = mean_value + 1.96 * std.error(kin, na.rm = TRUE)) %>%
+  ungroup()
+summary_stats
+
+# save results
+setwd(kinship_result_dir)
+write.csv(summary_stats,file = "Mean-kinship-unrel-REGIONS-SPECIFIC.csv",row.names = FALSE)
+
+# SEASONS
+
+# Calculate means and 95% C.I.'s
+summary_stats <- kin_df %>%
+  dplyr::group_by(Kinship_Season_Label) %>%
+  dplyr::summarize(mean_value = mean(kin, na.rm = TRUE),
+            ci_lower = mean_value - 1.96 * std.error(kin, na.rm = TRUE),
+            ci_upper = mean_value + 1.96 * std.error(kin, na.rm = TRUE)) %>%
+  ungroup()
+summary_stats
+
+# save results
+setwd(kinship_result_dir)
+write.csv(summary_stats,file = "Mean-kinship-unrel-SEASONS.csv",row.names = FALSE)
+
+# SEASONS SPECIFIC
+
+# Calculate means and 95% C.I.'s
+summary_stats <- kin_df %>%
+  dplyr::group_by(Kinship_Season2_Label) %>%
+  dplyr::summarize(mean_value = mean(kin, na.rm = TRUE),
+            ci_lower = mean_value - 1.96 * std.error(kin, na.rm = TRUE),
+            ci_upper = mean_value + 1.96 * std.error(kin, na.rm = TRUE)) %>%
+  ungroup()
+summary_stats
+
+# save results
+setwd(kinship_result_dir)
+write.csv(summary_stats,file = "Mean-kinship-unrel-SEASONS-SPECIFIC.csv",row.names = FALSE)
+
+```
+
+```{r Kinship - permutation tests & plots}
+
+# Import kinship dataframe with metadata
+setwd(kinship_result_dir)
+kin_df <- read.csv(file = "PostPcair-KING-kinship-coeffs-with-metadata-unrel.csv",header = TRUE)
+
+### FUNCTION
+
+kin_permutation_test <- function(kinship_df, pop1, pop2, num_permutations, pop_column_name, kinship_column_name) {
+  pop_column_index <- which(names(kinship_df) == pop_column_name)
+  kinship_column_index <- which(names(kinship_df) == kinship_column_name)
+  permuted_mean_differences <- numeric(num_permutations)
+  observed_mean_difference <- mean(kinship_df[kinship_df[, pop_column_index] == pop1, kinship_column_index]) -
+                              mean(kinship_df[kinship_df[, pop_column_index] == pop2, kinship_column_index])
+  set.seed(123)
+  for (i in 1:num_permutations) {
+    shuffled_df <- kinship_df
+    shuffled_df[, pop_column_index] <- sample(shuffled_df[, pop_column_index])
+    permuted_mean_difference <- mean(shuffled_df[shuffled_df[, pop_column_index] == pop1, kinship_column_index]) -
+                                mean(shuffled_df[shuffled_df[, pop_column_index] == pop2, kinship_column_index])
+    permuted_mean_differences[i] <- permuted_mean_difference
+  }
+  p_value <- 2 * min(
+    mean(permuted_mean_differences >= observed_mean_difference),
+    mean(permuted_mean_differences <= observed_mean_difference)
+  )
+  permuted_data <- data.frame(permuted_mean_difference = permuted_mean_differences)
+  return(list(
+    p_value = p_value,
+    permuted_data = permuted_data,
+    observed_mean_difference = observed_mean_difference
+  ))
+}
+
+
+
+### TEST - SEXES
+
+# Remove between-sex comparisons
+kin_df2 <- kin_df %>% filter(Kinship_Sex_Label %in% c("Between-males","Between-females"))
+
+# Permutation test (uses function from earlier chunk)
+kin_perm_result <- kin_permutation_test(kinship_df = kin_df2, pop1 = "Between-males", pop2 = "Between-females", num_permutations = 1000, pop_column_name = "Kinship_Sex_Label", kinship_column_name = "kin")
+
+# Save the results
+setwd(kinship_result_dir)
+sink(file = "Kinship-permutation-result-unrel-SEX.txt")
+cat("Observed Mean Difference:", kin_perm_result$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result$p_value, "\n")
+sink()
+write.csv(kin_perm_result$permuted_data,file = "Kinship-permutation-bootstraps-unrel-SEX.csv",row.names = FALSE)
+
+
+
+### TEST - SITES
+
+# Permutation test (uses function from earlier chunk)
+kin_perm_result <- kin_permutation_test(kinship_df = kin_df, pop1 = "Between-sites", pop2 = "Within-sites", num_permutations = 1000, pop_column_name = "Kinship_Site_Label", kinship_column_name = "kin")
+
+# Save the results
+setwd(kinship_result_dir)
+sink(file = "Kinship-permutation-result-unrel-SITES.txt")
+cat("Observed Mean Difference:", kin_perm_result$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result$p_value, "\n")
+sink()
+write.csv(kin_perm_result$permuted_data,file = "Kinship-permutation-bootstraps-unrel-SITES.csv",row.names = FALSE)
+
+
+
+### TEST - REGIONS
+
+# Permutation test (uses function from earlier chunk)
+kin_perm_result <- kin_permutation_test(kinship_df = kin_df, pop1 = "Between-regions", pop2 = "Within-regions", num_permutations = 1000, pop_column_name = "Kinship_Region_Label", kinship_column_name = "kin")
+
+# Save the results
+setwd(kinship_result_dir)
+sink(file = "Kinship-permutation-result-unrel-REGIONS.txt")
+cat("Observed Mean Difference:", kin_perm_result$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result$p_value, "\n")
+sink()
+write.csv(kin_perm_result$permuted_data,file = "Kinship-permutation-bootstraps-unrel-REGIONS.csv",row.names = FALSE)
+
+
+
+### TEST - REGIONS
+
+pop1 <- "North"
+pop2 <- "Central"
+pop3 <- "South"
+region_list <- list(pop1,pop2,pop3)
+
+# Remove between-region comparisons
+kin_df2 <- kin_df %>% filter(Kinship_Region2_Label %in% region_list)
+
+# Convert 'pop' to factor with custom order for plotting
+kin_df2$Kinship_Region2_Label <- factor(kin_df2$Kinship_Region2_Label, levels = region_list)
+
+# Permutation tests
+pop_comp1 <- paste(pop1,pop2,sep="-") # Name to save results and plots
+kin_perm_result_1 <- kin_permutation_test(kinship_df = kin_df2, pop1 = pop1, pop2 = pop2, num_permutations = 1000, pop_column_name = "Kinship_Region2_Label", kinship_column_name = "kin")
+pop_comp2 <- paste(pop1,pop3,sep="-") # Name to save results and plots
+kin_perm_result_2 <- kin_permutation_test(kinship_df = kin_df2, pop1 = pop1, pop2 = pop3, num_permutations = 1000, pop_column_name = "Kinship_Region2_Label", kinship_column_name = "kin")
+pop_comp3 <- paste(pop2,pop3,sep="-") # Name to save results and plots
+kin_perm_result_3 <- kin_permutation_test(kinship_df = kin_df2, pop1 = pop2, pop2 = pop3, num_permutations = 1000, pop_column_name = "Kinship_Region2_Label", kinship_column_name = "kin")
+
+# Save the results
+setwd(kinship_result_dir)
+sink(file = "Kinship-permutation-result-unrel-REGIONS-specific.txt")
+cat(print(pop_comp1), "\n")
+cat("Observed Mean Difference:", kin_perm_result_1$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result_1$p_value, "\n")
+cat(print(pop_comp2), "\n")
+cat("Observed Mean Difference:", kin_perm_result_2$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result_2$p_value, "\n")
+cat(print(pop_comp3), "\n")
+cat("Observed Mean Difference:", kin_perm_result_3$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result_3$p_value, "\n")
+sink()
+write.csv(kin_perm_result_1$permuted_data,file = paste("Kinship-permutation-bootstraps-unrel-REGIONS-",pop_comp1,".csv",sep=""),row.names = FALSE)
+write.csv(kin_perm_result_2$permuted_data,file = paste("Kinship-permutation-bootstraps-unrel-REGIONS-",pop_comp2,".csv",sep=""),row.names = FALSE)
+write.csv(kin_perm_result_3$permuted_data,file = paste("Kinship-permutation-bootstraps-unrel-REGIONS-",pop_comp3,".csv",sep=""),row.names = FALSE)
+
+
+### TESTS FOR MALES AND FEMALES SEPARATELY
+
+kin_df2 <- kin_df %>% filter(Kinship_Sex_Label %in% c("Between-males","Between-females"))
+
+
+
+### TEST - MALES - SITES
+
+# Males only
+kin_df3 <- kin_df2 %>% filter(Kinship_Sex_Label == "Between-males")
+
+# Permutation tests
+kin_perm_result <- kin_permutation_test(kinship_df = kin_df3, pop1 = "Between-sites", pop2 = "Within-sites", num_permutations = 1000, pop_column_name = "Kinship_Site_Label", kinship_column_name = "kin")
+
+# Save the results
+setwd(kinship_result_dir)
+sink(file = "Kinship-permutation-result-unrel-SITES-MALES.txt")
+cat("Observed Mean Difference:", kin_perm_result$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result$p_value, "\n")
+sink()
+write.csv(kin_perm_result$permuted_data,file = "Kinship-permutation-bootstraps-unrel-SITES-MALES.csv",row.names = FALSE)
+
+
+
+### TEST - FEMALES - SITES
+
+# Females only
+kin_df3 <- kin_df2 %>% filter(Kinship_Sex_Label == "Between-females")
+
+# Permutation tests
+kin_perm_result <- kin_permutation_test(kinship_df = kin_df3, pop1 = "Between-sites", pop2 = "Within-sites", num_permutations = 1000, pop_column_name = "Kinship_Site_Label", kinship_column_name = "kin")
+
+# Save the results
+setwd(kinship_result_dir)
+sink(file = "Kinship-permutation-result-unrel-SITES-FEMALES.txt")
+cat("Observed Mean Difference:", kin_perm_result$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result$p_value, "\n")
+sink()
+write.csv(kin_perm_result$permuted_data,file = "Kinship-permutation-bootstraps-unrel-SITES-FEMALES.csv",row.names = FALSE)
+
+
+
+### TEST - MALES - REGIONS
+
+# Males only
+kin_df3 <- kin_df2 %>% filter(Kinship_Sex_Label == "Between-males")
+
+# Permutation tests
+kin_perm_result <- kin_permutation_test(kinship_df = kin_df3, pop1 = "Between-regions", pop2 = "Within-regions", num_permutations = 1000, pop_column_name = "Kinship_Region_Label", kinship_column_name = "kin")
+
+# Save the results
+setwd(kinship_result_dir)
+sink(file = "Kinship-permutation-result-unrel-REGIONS-MALES.txt")
+cat("Observed Mean Difference:", kin_perm_result$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result$p_value, "\n")
+sink()
+write.csv(kin_perm_result$permuted_data,file = "Kinship-permutation-bootstraps-unrel-REGIONS-MALES.csv",row.names = FALSE)
+
+
+
+### TEST - FEMALES - REGIONS
+
+# Females only
+kin_df3 <- kin_df2 %>% filter(Kinship_Sex_Label == "Between-females")
+
+# Permutation tests
+kin_perm_result <- kin_permutation_test(kinship_df = kin_df3, pop1 = "Between-regions", pop2 = "Within-regions", num_permutations = 1000, pop_column_name = "Kinship_Region_Label", kinship_column_name = "kin")
+
+# Save the results
+setwd(kinship_result_dir)
+sink(file = "Kinship-permutation-result-unrel-REGIONS-FEMALES.txt")
+cat("Observed Mean Difference:", kin_perm_result$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result$p_value, "\n")
+sink()
+write.csv(kin_perm_result$permuted_data,file = "Kinship-permutation-bootstraps-unrel-REGIONS-FEMALES.csv",row.names = FALSE)
+
+
+
+### TEST - MALES - SPECIFIC REGIONS
+
+# Remove between-region comparisons
+kin_df2 <- kin_df %>% filter(Kinship_Region2_Label %in% region_list)
+
+# Males only
+kin_df3 <- kin_df2 %>% filter(Kinship_Sex_Label == "Between-males")
+
+# Permutation tests
+pop_comp1 <- paste(pop1,pop2,sep="-") # Name to save results and plots
+kin_perm_result_1 <- kin_permutation_test(kinship_df = kin_df3, pop1 = pop1, pop2 = pop2, num_permutations = 1000, pop_column_name = "Kinship_Region2_Label", kinship_column_name = "kin")
+pop_comp2 <- paste(pop1,pop3,sep="-") # Name to save results and plots
+kin_perm_result_2 <- kin_permutation_test(kinship_df = kin_df3, pop1 = pop1, pop2 = pop3, num_permutations = 1000, pop_column_name = "Kinship_Region2_Label", kinship_column_name = "kin")
+pop_comp3 <- paste(pop2,pop3,sep="-") # Name to save results and plots
+kin_perm_result_3 <- kin_permutation_test(kinship_df = kin_df3, pop1 = pop2, pop2 = pop3, num_permutations = 1000, pop_column_name = "Kinship_Region2_Label", kinship_column_name = "kin")
+
+# Save the results
+setwd(kinship_result_dir)
+sink(file = "Kinship-permutation-result-unrel-REGIONS-specific-MALES.txt")
+cat(print(pop_comp1), "\n")
+cat("Observed Mean Difference:", kin_perm_result_1$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result_1$p_value, "\n")
+cat(print(pop_comp2), "\n")
+cat("Observed Mean Difference:", kin_perm_result_2$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result_2$p_value, "\n")
+cat(print(pop_comp3), "\n")
+cat("Observed Mean Difference:", kin_perm_result_3$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result_3$p_value, "\n")
+sink()
+write.csv(kin_perm_result_1$permuted_data,file = paste("Kinship-permutation-bootstraps-unrel-REGIONS-MALES-",pop_comp1,".csv",sep=""),row.names = FALSE)
+write.csv(kin_perm_result_2$permuted_data,file = paste("Kinship-permutation-bootstraps-unrel-REGIONS-MALES-",pop_comp2,".csv",sep=""),row.names = FALSE)
+write.csv(kin_perm_result_3$permuted_data,file = paste("Kinship-permutation-bootstraps-unrel-REGIONS-MALES-",pop_comp3,".csv",sep=""),row.names = FALSE)
+
+
+
+### TESTS - FEMALES - SPECIFIC REGIONS
+
+# Females only
+kin_df3 <- kin_df2 %>% filter(Kinship_Sex_Label == "Between-females")
+
+# Permutation tests
+pop_comp1 <- paste(pop1,pop2,sep="-") # Name to save results and plots
+kin_perm_result_1 <- kin_permutation_test(kinship_df = kin_df3, pop1 = pop1, pop2 = pop2, num_permutations = 1000, pop_column_name = "Kinship_Region2_Label", kinship_column_name = "kin")
+pop_comp2 <- paste(pop1,pop3,sep="-") # Name to save results and plots
+kin_perm_result_2 <- kin_permutation_test(kinship_df = kin_df3, pop1 = pop1, pop2 = pop3, num_permutations = 1000, pop_column_name = "Kinship_Region2_Label", kinship_column_name = "kin")
+pop_comp3 <- paste(pop2,pop3,sep="-") # Name to save results and plots
+kin_perm_result_3 <- kin_permutation_test(kinship_df = kin_df3, pop1 = pop2, pop2 = pop3, num_permutations = 1000, pop_column_name = "Kinship_Region2_Label", kinship_column_name = "kin")
+
+# Save the results
+setwd(kinship_result_dir)
+sink(file = "Kinship-permutation-result-unrel-REGIONS-specific-FEMALES.txt")
+cat(print(pop_comp1), "\n")
+cat("Observed Mean Difference:", kin_perm_result_1$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result_1$p_value, "\n")
+cat(print(pop_comp2), "\n")
+cat("Observed Mean Difference:", kin_perm_result_2$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result_2$p_value, "\n")
+cat(print(pop_comp3), "\n")
+cat("Observed Mean Difference:", kin_perm_result_3$observed_mean_difference, "\n")
+cat("Two-sided p-value:", kin_perm_result_3$p_value, "\n")
+sink()
+write.csv(kin_perm_result_1$permuted_data,file = paste("Kinship-permutation-bootstraps-unrel-REGIONS-FEMALES-",pop_comp1,".csv",sep=""),row.names = FALSE)
+write.csv(kin_perm_result_2$permuted_data,file = paste("Kinship-permutation-bootstraps-unrel-REGIONS-FEMALES-",pop_comp2,".csv",sep=""),row.names = FALSE)
+write.csv(kin_perm_result_3$permuted_data,file = paste("Kinship-permutation-bootstraps-unrel-REGIONS-FEMALES-",pop_comp3,".csv",sep=""),row.names = FALSE)
+
+
+
+
+
+### PLOTS
+
+# SEX
+
+kin_df2 <- kin_df %>% filter(Kinship_Sex_Label %in% c("Between-males","Between-females"))
+
+# Kinship by sex - Mean and 95% CI plot
+A <- ggplot(kin_df2, aes(x = Kinship_Sex_Label, y = kin, color = Kinship_Sex_Label)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "errorbar", width = 0.2) + # Add a mean layer with 95% confidence intervals
+  stat_summary(fun.y = "mean", geom = "point", size = 3, shape = 20, fill = "white") + # Add a point layer for the mean value
+  labs(x = "Sex", y = "Mean kinship") +
+  scale_color_manual(values = c("#FFCD00", "#00843D"), name = "") +
+  scale_x_discrete(labels = c("F","M"))
+A
+
+# SITES
+
+# Kinship by site - Mean and 95% CI plot
+B <- ggplot(kin_df, aes(x = Kinship_Site_Label, y = kin, color = Kinship_Site_Label)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "errorbar", width = 0.2) + # Add a mean layer with 95% confidence intervals
+  stat_summary(fun.y = "mean", geom = "point", size = 3, shape = 20, fill = "white") + # Add a point layer for the mean value
+  labs(x = "Localities", y = "Mean kinship") +
+  scale_color_manual(values = c("red", "blue"), name = "") +
+  scale_x_discrete(labels = c("Between","Within"))
+B
+
+# REGIONS
+
+# Kinship by regions - Mean and 95% CI plot
+C <- ggplot(kin_df, aes(x = Kinship_Region_Label, y = kin, color = Kinship_Region_Label)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "errorbar", width = 0.2) + # Add a mean layer with 95% confidence intervals
+  stat_summary(fun.y = "mean", geom = "point", size = 3, shape = 20, fill = "white") + # Add a point layer for the mean value
+  labs(x = "Regions", y = "Mean kinship") +
+  scale_color_manual(values = c("red", "blue"), name = "") +
+  scale_x_discrete(labels = c("Between","Within"))
+C
+
+# REGIONS SPECIFIC
+
+# Remove between-region comparisons
+kin_df2 <- kin_df %>% filter(Kinship_Region2_Label %in% region_list)
+
+# Convert 'pop' to factor with custom order for plotting
+kin_df2$Kinship_Region2_Label <- factor(kin_df2$Kinship_Region2_Label, levels = region_list)
+
+# Basic plot - Mean and 95% CI plot
+D <- ggplot(kin_df2, aes(x = Kinship_Region2_Label, y = kin, color = Kinship_Region2_Label)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "errorbar", width = 0.2) + # Add a mean layer with 95% confidence intervals
+  stat_summary(fun.y = "mean", geom = "point", size = 3, shape = 20, fill = "white") + # Add a point layer for the mean value
+  labs(x = "Regions", y = "Mean kinship") +
+  scale_fill_manual(values = c("#2176ae","#ce4257","#1A936F"), name = "") +
+  scale_x_discrete(labels = region_list)
+D
+
+
+# SEASONS PLOT
+
+G <- ggplot(kin_df2, aes(x = Kinship_Season2_Label, y = kin, color = Kinship_Season2_Label)) +
+  stat_summary(fun.data = "mean_cl_normal", geom = "errorbar", width = 0.2) + # Add a mean layer with 95% confidence intervals
+  stat_summary(fun.y = "mean", geom = "point", size = 3, shape = 20, fill = "white") + # Add a point layer for the mean value
+  labs(x = "Season collected", y = "Mean kinship") +
+  scale_color_manual(values = c("red", "blue","green","orange"), name = "Group")+
+  facet_grid(~ Kinship_Region2_Label)+
+  scale_x_discrete(labels = c("Between","Dry","Early Wet","Wet"))
+G
+
+# Save plots
+
+plot_margin <- theme(plot.margin=margin(t = 10, r = 10, b = 5, l = 10, unit = "pt"))
+plot_theme <- theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_rect(fill = NA), plot.background = element_rect(fill=NA), panel.border = element_rect(fill=NA),legend.position = "none") 
+text_size <- theme(axis.title.x = element_text(size = 10), axis.text.x = element_text(size = 8), axis.title.y = element_text(size = 10), axis.text.y = element_text(size = 8),plot.title=element_text(size=11,face="bold",hjust=0),legend.text = element_text(size=6))
+
+# All samples
+A2 <- A + plot_margin + plot_theme + text_size
+B2 <- B + plot_margin + plot_theme + text_size
+C2 <- C + plot_margin + plot_theme + text_size
+D2 <- D + plot_margin + plot_theme + text_size
+G2 <- G + plot_margin + plot_theme + text_size
+
+## TIFF and sized for Science Journal
+setwd(paste0(kinship_result_dir,"/_PLOTS"))
+tiff("Kinship-multi-plots-unrel-AllSamples.tif",width = 12, height = 10, unit='cm', res=300)
+ggarrange(A2,B2,C2,D2,
+          labels = c("A","B","C","D"),
+          ncol = 2, nrow = 2)
+dev.off()
+
+
+# Seasons plot
+setwd(paste0(kinship_result_dir,"/_PLOTS"))
+tiff("Kinship-multi-plots-unrel-AllSamples-seasons2.tif",width = 17.5, height = 6, unit='cm', res=300)
+ggarrange(G2,
+          labels = c(""),
+          ncol = 1, nrow = 1)
+dev.off()
+
+```

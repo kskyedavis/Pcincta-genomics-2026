@@ -1,0 +1,327 @@
+
+######################### BAM TO SFS SCRIPT ###########################
+
+### SET UP ###
+
+# $PROJDIR was the main directory during analysis. The final SFS files are saved in /data/sfs-data
+
+# Create sub-directories for processing raw data
+cd $PROJDIR
+mkdir Processed_Raw_Data
+mkdir GenomeAlignment
+mkdir ANGSD_SFS
+mkdir Stairway
+cd GenomeAlignment
+mkdir SAM
+mkdir BAM
+mkdir VAR
+mkdir fastq
+mkdir Genome
+mkdir BAMRealigned
+cd ../
+
+# Export the location of these directories
+export PROCESSRAW=$PROJDIR/Processed_Raw_Data
+export GENMAP=$PROJDIR/GenomeAlignment
+export FASTQDIR=$PROJDIR/GenomeAlignment/fastq
+export SAMDIR=$PROJDIR/GenomeAlignment/SAM
+export BAMDIR=$PROJDIR/GenomeAlignment/BAM
+export VARDIR=$PROJDIR/GenomeAlignment/VAR
+export ANGSDIR=$PROJDIR/Finch/ANGSD_SFS
+export STAIRDIR=$PROJDIR/Finch/Stairway
+
+# Increase max number of files open
+ulimit -c unlimited
+ulimit -n 20000000
+sudo launchctl limit maxfiles 20000000 20000000
+
+
+
+
+
+### PROCESS FASTQ ###
+
+# For Finch data, Batch 2 already has barcodes removed. So raw data processing is carried out separately for Batch 1 and 2 until genome mapping.
+
+# Batch 1 = BTF samples (n = 86 with reps)
+# Batch 2 = NOV samples (n = 116 with reps)
+
+cd Processed_Raw_Data
+
+# Rename fastq files. This reads the first column 'a' of Names.txt and looks for a ".FASTQ.gz" files with that name, then copies it into the new directory 'renamed' and renames it using the second column 'b' of Names.txt. Takes ~5 min.
+
+mkdir Batch_1_renamed
+while read a b; do cp $RAWFASTQ/Batch_1/"$a".FASTQ.gz ./renamed/"$b".FASTQ.gz; done < $PROCESSRAW/Names.txt
+
+mkdir Batch_2_renamed
+while read a b; do cp $RAWFASTQ/Batch_2/"$a".FASTQ.gz ./renamed/"$b".FASTQ.gz; done < $PROCESSRAW/Names.txt
+
+
+# Unzip fastq files
+
+cd Batch_1_renamed
+mkdir unzip
+for a in *.gz; do gunzip -c $a > unzip/`echo $a | sed s/.gz//`; done
+
+cd ../Batch_2_renamed
+mkdir unzip
+for a in *.gz; do gunzip -c $a > unzip/`echo $a | sed s/.gz//`; done
+
+
+# For batch 1, filter sequences to only retain those > 82 bp (i.e., with the barcode).
+
+cd $PROCESSRAW/Batch_1_renamed/unzip
+mkdir filter
+for a in *.FASTQ; do awk 'NR%4==1{a=$0} NR%4==2{b=$0} NR%4==3{c=$0} NR%4==0&&length(b)>82{print a"\n"b"\n"c"\n"$0;}' $a > ./filter/$a ; done
+
+
+# Remove barcodes. Trim sequence length using Len.txt file which contains the sample-specific barcode length from the start of the sequence.
+
+conda activate fastx_toolkit
+
+cd $PROCESSRAW/Batch_1_renamed/unzip/filter
+mkdir rm_barcode
+while read a b; do fastx_trimmer -f $b -i $a.FASTQ -Q33 -o ./rm_barcode/$a.FASTQ; done < $PROCESSRAW/Len_Batch1.txt
+
+
+# Remove Illumina Adapters
+
+# If your restriction enzyme combo was Pst/Sp4 (P_ad_sp4 in the targets csv file) or Spf/Sp4 (Sp_ad_sp4) use --adapter1 AGCGGTTCAGCAGGAATGCCGAGACCGATCTC. If your combo was anything else from DArT use --adapter1 AGATCGGAAGAGCGGTTCAGCAGGAATGCCGA
+
+cd $PROCESSRAW/Batch_1_renamed/unzip/filter/rm_barcode
+mkdir rm_adapter
+for a in *.FASTQ; do AdapterRemoval --file1 $a --output1 ./rm_adapter/$a --adapter1 AGCGGTTCAGCAGGAATGCCGAGACCGATCTC --discarded ./rm_adapter/null --settings ./rm_adapter/null; done
+rm ./rm_adapter/null
+
+
+# Pick up *NEW* DArT orders from here
+
+
+# Trim sequences to equal length (69bp)
+
+cd $PROCESSRAW/Batch_1_renamed/unzip/filter/rm_barcode/rm_adapter
+mkdir trim69
+for a in *.FASTQ; do fastx_trimmer -l 69 -i $a -Q33 -o ./trim69/$a; done
+
+cd $PROCESSRAW/Batch_2_renamed/unzip
+mkdir trim69
+for a in *.FASTQ; do fastx_trimmer -l 69 -i $a -Q33 -o ./trim69/$a; done
+
+cd $PROCESSRAW/Batch_1_renamed/unzip/filter/rm_barcode/rm_adapter/trim69
+for a in *.FASTQ; do cat $a| head -2 | tail -1; done > trim_check.txt
+cat trim_check.txt
+awk '{ print length($0); }' trim_check.txt # Count the number of characters in each line
+
+cd $PROCESSRAW/Batch_2_renamed/unzip/trim69
+for a in *.FASTQ; do cat $a| head -2 | tail -1; done > trim_check.txt
+cat trim_check.txt
+awk '{ print length($0); }' trim_check.txt # Count the number of characters in each line
+
+
+
+# FASTQC check
+
+cd $PROCESSRAW/Batch_1_renamed/unzip/filter/rm_barcode/rm_adapter/trim69
+mkdir fastqc
+ls -d $PWD/*FASTQ > $PWD/fastqc_list.txt
+for a in $PWD/*.FASTQ ; do fastqc $a --outdir=./fastqc ; done
+
+cd $PROCESSRAW/Batch_2_renamed/unzip/trim69
+mkdir fastqc
+ls -d $PWD/*FASTQ > $PWD/fastqc_list.txt
+for a in $PWD/*.FASTQ ; do fastqc $a --outdir=./fastqc ; done
+
+
+# Copy all these files into the FASTQDIR directory
+cp $PROCESSRAW/Batch_1_renamed/unzip/filter/rm_barcode/rm_adapter/trim69/*.FASTQ $FASTQDIR
+cp $PROCESSRAW/Batch_2_renamed/unzip/trim69/*.FASTQ $FASTQDIR
+
+
+
+
+
+### FORMAT THE GENOME ###
+
+conda activate genome_toolkit
+
+# Untar and unzip
+cd $GENMAP/Genome
+tar -xvf bTaeGut1.4.pri.fna.tar
+gunzip ncbi-genomes-2024-06-14/GCF_003957565.2_bTaeGut1.4.pri_genomic.fna.gz
+
+# Move the unzipped .fna file back to Genome dir
+mv ncbi-genomes-2024-06-14/GCF_003957565.2_bTaeGut1.4.pri_genomic.fna $GENMAP/Genome
+
+# Export the location of the reference genome
+export GENOME_FASTA=$GENMAP/Genome/GCF_003957565.2_bTaeGut1.4.pri_genomic.fna
+export GENOME_DICT=$GENMAP/Genome/GCF_003957565.2_bTaeGut1.4.pri_genomic.dict
+
+# Index the genome with bowtie and samtools
+bowtie2-build $GENOME_FASTA $GENOME_FASTA
+samtools faidx $GENOME_FASTA
+
+# Build sequence dictionary with picard
+picard CreateSequenceDictionary -R $GENOME_FASTA -O $GENOME_DICT
+
+
+
+
+
+### MAP READS TO GENOME ###
+
+cd $GENMAP
+
+# Align reads to the reference genome by creating a Unix executable file called fastq_to_sam that contains the full function call for each FASTQ file. Alignment stats are saved to the fastq_to_sam.log file generated.
+
+ls $FASTQDIR/*FASTQ | xargs -n 1 basename -s .FASTQ |  perl -pe 's/(\S+)/bowtie2 --very-sensitive-local -p 7  -x \$GENOME_FASTA -U \$FASTQDIR\/$1.FASTQ -S \$SAMDIR\/$1.sam 2>> fastq_to_sam.log/ ' > $GENMAP/bt2
+sh $GENMAP/fastq_to_sam
+
+# Make BAM files, and sort and index them
+
+ls $FASTQDIR/*FASTQ | xargs -n 1 basename -s .FASTQ |  perl -pe 's/(\S+)/samtools view -S -b \$SAMDIR\/$1\.sam > \$BAMDIR\/$1\.unsorted\.bam && samtools sort -o \$BAMDIR\/$1\.sorted\.bam \$BAMDIR\/$1\.unsorted\.bam && picard AddOrReplaceReadGroups -INPUT \$BAMDIR\/$1\.sorted\.bam -OUTPUT \$BAMDIR\/$1\.bam -RGID group1 -RGLB lib1 -RGPL illumina -RGPU unit1 -RGSM $1 && samtools index \$BAMDIR\/$1\.bam/' > $GENMAP/sam_to_bam
+sh $GENMAP/sam_to_bam
+
+# Remove sorted and unsorted BAM files, keeping only final indexed BAM files (.bam and .bai)
+rm $BAMDIR/*sorted*
+
+# Remove the SAM dir
+rm -r $SAMDIR
+
+# Make a summary table of reads and alignment success for all samples using the fastq_to_sam.log file
+
+ls $FASTQDIR/*FASTQ | xargs -n 1 basename -s .FASTQ > $GENMAP/samples
+for a in $FASTQDIR/*FASTQ ; do awk '{s++}END{print s/4}' "$a"; done > $GENMAP/reads
+grep "overall alignment rate" $GENMAP/fastq_to_sam.log | sed 's,% overall alignment rate,,g' > Alignment_Overall
+
+grep "%) aligned exactly 1 time" $GENMAP/fastq_to_sam.log | sed 's,%) aligned exactly 1 time,,g' | sed 's,    ,,g' | sed 's, ,  ,g' |  sed 's,(,,g' | cut -f 2 > $GENMAP/Alignment_Once_Prop
+grep "%) aligned exactly 1 time" $GENMAP/fastq_to_sam.log | sed 's,%) aligned exactly 1 time,,g' | sed 's,    ,,g' | sed 's, ,  ,g' |  sed 's,(,,g' | cut -f 1 > $GENMAP/Alignment_Once_Reads
+grep "%) aligned >1 times" $GENMAP/fastq_to_sam.log | sed 's,%) aligned >1 times,,g' | sed 's,    ,,g' | sed 's, ,      ,g' |  sed 's,(,,g' | cut -f 1 > $GENMAP/Alignment_More_Reads
+grep "%) aligned >1 times" $GENMAP/fastq_to_sam.log | sed 's,%) aligned >1 times,,g' | sed 's,    ,,g' | sed 's, ,      ,g' |  sed 's,(,,g' | cut -f 2 > $GENMAP/Alignment_More_Prop
+grep "%) aligned 0 times" $GENMAP/fastq_to_sam.log | sed 's,%) aligned 0 times,,g' | sed 's,    ,,g' | sed 's, ,        ,g' |  sed 's,(,,g' | cut -f 1 > $GENMAP/Not_aligned_Reads
+grep "%) aligned 0 times" $GENMAP/fastq_to_sam.log | sed 's,%) aligned 0 times,,g' | sed 's,    ,,g' | sed 's, ,        ,g' |  sed 's,(,,g' | cut -f 2 > $GENMAP/Not_aligned_R_Prop
+
+paste $GENMAP/samples $GENMAP/reads $GENMAP/Alignment_Once_Reads $GENMAP/Alignment_Once_Prop $GENMAP/Alignment_More_Reads $GENMAP/Alignment_More_Prop $GENMAP/Not_aligned_Reads $GENMAP/Not_aligned_R_Prop > $GENMAP/Alignment_stats
+paste $GENMAP/samples $GENMAP/reads $GENMAP/Alignment_Once_Reads $GENMAP/Alignment_More_Reads $GENMAP/Not_aligned_Reads > $GENMAP/Alignment_stats
+
+sed -i "" '1s/^/Sample Total Reads     Aligned once    Aligned once prop       Aligned > 1     Aligned >1 prop Not Aligned      Prop not aligned'$'\ 
+/' $GENMAP/Alignment_stats
+
+rm $GENMAP/reads $GENMAP/Alignment_Once_Prop $GENMAP/Alignment_Once_Reads $GENMAP/Alignment_More_Reads $GENMAP/Alignment_More_Prop $GENMAP/Not_aligned_Reads $GENMAP/Not_aligned_R_Prop
+
+
+### ANGSD EASY-SFS ###
+
+cd $ANGSDIR
+
+# Samples were chosen from the post-filtering unrelated dataset (i.e., using the DArT snp_mapping processed data, with strict quality controls, and conducting PC-AiR and PC-Relate to identify related individuals (BTF-final-samples-metadata-unrelated.csv). Then subsampled down to the minimum sample size per pop (South) = n = 20. This meant subsampling for Central pop, spreading samples across the seasons sampled and across sites, prioritising genome mapping quality. Then, ALL_60_Bamlist.txt compiled the 20 samples from each region (20 C, 20 N, 20 S).
+
+# SFS with all samples (assuming 1 pop, panmixia) for Stairway plot (folded SFS)
+
+# Set filter parameters
+### -minInd 5 => only keep sites with at least the MinDepthInd for at least [int] individuals. Set this to be around half the total number individuals in your pop. Default is 1.
+### -setMinDepthInd 2 => the min read depth per individual used for -minInd, only applied to analyses which are based on counts of allele i.e., doCounts 1
+### -setMaxDepthInd 1000 => max read depth allowed
+### -remove_bads 1 => Remove read with a glad above 255 (not primary, failure, duplicate reads). -remove_bads 1 is the default.
+### -trim 0 => Number of bases to remove from both ends of the read
+### -baq 1 => Perform normal BAQ (set to 2 for extended BAQ, or 0 for no BAQ) BAQ is the Phred-scaled probability of a read base being misaligned - reducing false SNPs caused by misalignments
+### -minMapQ => Minimum mapQ quality
+### -minQ 20 => Minimum base quality score
+### -doCounts 1 => 
+### -C 50 => Adjust mapQ for excessive mismatches, supply -ref
+
+# Part 1: create SAF files (site allele frequency likelihood).
+
+mkdir ALL_60
+
+$ANGSDv4/angsd -P 7 -b $ANGSDIR/ALL_60_Bamlist.txt -anc $GENOME_FASTA -ref $GENOME_FASTA -remove_bads 1 -trim 0 -C 50 -baq 1 -minMapQ 20 -minQ 20 -minInd 30 -setMinDepthInd 2 -setMaxDepthInd 1000 -doCounts 1 -out $ANGSDIR/ALL_60/ALL_60_saf -GL 1 -doSaf 1
+
+# Keep a record of the total number of sites analysed and retained after filtering (presented at the end of the command prompt console).
+### Total number of sites analyzed: 25367642
+### Number of sites retained after filtering: 4438791 
+
+
+# Part 2: optimise SAF files to estimate the site frequency spectrum (SFS). For Stairway, set -fold 1 , for dadi leave this out (you will fold in dadi later, otherwise dadi won't recognise an ANGSD folded SFS as folded - mostly for 2d or 3d SFS due to how ANGSD handles allele frequencies (dadi needs global, ANGSD uses within-pop). For a 1d SFS, it shouldn't matter).
+
+# Unfolded SFS for dadi
+$EASYSFS/realSFS $ANGSDIR/ALL_60/ALL_60_saf.saf.idx -maxIter 100 -p 7 > $ANGSDIR/ALL_60/all_pop_n60_1d_sfs_unfolded.txt
+
+# Folded SFS for Stairway
+$EASYSFS/realSFS $ANGSDIR/ALL_60/ALL_60_saf.saf.idx -maxIter 100 -p 7 -fold 1 > $ANGSDIR/ALL_60/all_pop_n60_1d_sfs_folded.txt
+
+
+
+# OPTIONAL: Repeat for individual pops (Only doing this for Finch as S and N/C were differentiated. Combined C_20_Bamlist and N_20_Bamlist). Change -minInd to 10 for S and 20 for NC.
+
+mkdir NC_40
+
+$ANGSDv4/angsd -P 7 -b $ANGSDIR/NC_40_Bamlist.txt -anc $GENOME_FASTA -ref $GENOME_FASTA -remove_bads 1 -trim 0 -C 50 -baq 1 -minMapQ 20 -minQ 20 -minInd 20 -setMinDepthInd 2 -setMaxDepthInd 1000 -doCounts 1 -out $ANGSDIR/NC_40/NC_40_saf -GL 1 -doSaf 1
+
+### Total number of sites analyzed: 22676042
+### Number of sites retained after filtering: 4565169
+
+$EASYSFS/realSFS $ANGSDIR/NC_40/NC_40_saf.saf.idx -maxIter 100 -p 7 > $ANGSDIR/NC_40/NC_n40_1d_sfs_unfolded.txt
+$EASYSFS/realSFS $ANGSDIR/NC_40/NC_40_saf.saf.idx -maxIter 100 -p 7 -fold 1 > $ANGSDIR/NC_40/NC_n40_1d_sfs_folded.txt
+
+mkdir S_20
+
+$ANGSDv4/angsd -P 7 -b $ANGSDIR/S_20_Bamlist.txt -anc $GENOME_FASTA -ref $GENOME_FASTA -remove_bads 1 -trim 0 -C 50 -baq 1 -minMapQ 20 -minQ 20 -minInd 10 -setMinDepthInd 2 -setMaxDepthInd 1000 -doCounts 1 -out $ANGSDIR/S_20/S_20_saf -GL 1 -doSaf 1
+
+### Total number of sites analyzed: 16419786
+### Number of sites retained after filtering: 4340872 
+
+$EASYSFS/realSFS $ANGSDIR/S_20/S_20_saf.saf.idx -maxIter 100 -p 7 > $ANGSDIR/S_20/S_n20_1d_sfs_unfolded.txt
+$EASYSFS/realSFS $ANGSDIR/S_20/S_20_saf.saf.idx -maxIter 100 -p 7 -fold 1 > $ANGSDIR/S_20/S_n20_1d_sfs_folded.txt
+
+
+# OPTIONAL: Create a joint SFS for multi-pop comparisons in dadi
+mkdir S_20_NC_40_JSFS
+$EASYSFS/realSFS $ANGSDIR/NC_40/NC_40_saf.saf.idx $ANGSDIR/S_20/S_20_saf.saf.idx -maxIter 100 -p 7 > $ANGSDIR/S_20_NC_40_JSFS/NC40_S20_2d_sfs_unfolded.txt
+
+# To get the number of invariant sites, sum the FIRST and LAST value in the unfolded SFS. All other values will sum to the number of segregating (variant) sites (but easier to get this value with dadi).
+
+
+
+
+### ADDITIONAL PREP FOR STAIRWAY PLOT ###
+
+# You will need
+# pop id, no. samples (nseq), total sites post-filtering (L), the SFS you made with ANGSD (see notes below), mutation rate per site per generation (mu) for your species or a close relative, and generation length (year per generation time).
+
+# Create blueprint files for each pop for the stairway plot - use template.blueprint as example - save into the $STAIRDIR directory
+
+# Run stairway plot the blueprint file. Make sure the directory containing Stairbuilder is in $STAIRDIR
+ 
+cd $STAIRDIR
+
+conda deactivate
+
+java -cp stairway_plot_es/ Stairbuilder $STAIRDIR/Stairway_ALL_60_final-g3.txt
+
+bash Stairway_ALL_60_final-g3.txt.sh
+
+# Final results for stairway were copied to /results/4-demography/4.2-stairway-plot
+
+
+
+### ADDITIONAL PREP FOR DADI ###
+
+# If you plan to run dadi, make sure you have generated either a 1d unfolded SFS above (for 1 pop analyses of historical demography only) or a 2d or 3d unfolded SFS with the correct pop order you want (for multi-pop analyses of historical demography and divergence/migration). For the latter, pop order matters for 3d analyses, depending on the models specified, because the first pop listed will be the first to diverge, etc.
+
+# Part of running dadi requires bootstrapped SFS's to get confidence intervals on parameter estimates. The alternative is removing all linked sites from your data, to assume unlinked data, and proceed with simpler approaches for getting confidence intervals.
+
+# For a 1D SFS with 60 samples, this is quick, ~ 30 minutes.
+
+mkdir $ANGSDIR/ALL_60_bs
+output_dir=$ANGSDIR/ALL_60_bs/
+
+# To generate 100 bootstrapped SFS's for dadi
+$EASYSFS/realSFS $ANGSDIR/ALL_60/ALL_60_saf.saf.idx -bootstrap 100 -P 7 > $ANGSDIR/ALL_60_bs/bootstraps.txt
+
+# Split the bootstrap file into multiple (one text file per bootstrap)
+n=1
+while IFS= read -r line; do
+  echo "$line" > "$output_dir/bootstrap_$n.txt"
+  n=$((n+1))
+done < $output_dir/bootstraps.txt
+
+# Rename headers etc then move to dadi
