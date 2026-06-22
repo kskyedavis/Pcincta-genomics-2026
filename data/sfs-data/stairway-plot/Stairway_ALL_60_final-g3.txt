@@ -1,0 +1,23 @@
+#input setting
+popid: ALL # id of the population (no white space)
+nseq: 120 # number of sequences
+L: 4438791  # total number of observed nucleic sites, including polymorphic and monomorphic
+whether_folded: true # whethr the SFS is folded (true or false)
+SFS: 15856.063321 9512.038937 6308.729840 4736.010938 3681.490675 3237.717663 2510.420368 2185.454754 1915.729560 1800.452750 1567.794436 1465.642967 1288.028450 1185.936151 1144.943733 979.047786 1073.455915 927.589646 918.111142 853.651586 746.720547 674.037576 724.180129 625.738216 635.139369 624.293116 596.493934 521.624992 529.756186 641.226032 412.143815 449.710640 447.495767 486.552467 384.140382 375.882359 433.898387 353.959474 454.756750 398.403023 387.017139 420.588140 305.375643 393.556634 326.136938 382.917633 322.818640 380.519210 326.265516 369.271545 341.399622 301.809491 358.827419 351.854398 349.652021 285.575039 285.610193 375.183808 304.439909 148.436654     # snp frequency spectrum: number of singleton, number of doubleton, etc. (separated by white space)
+#smallest_size_of_SFS_bin_used_for_estimation: 1 # default is 1; to ignore singletons, change this number to 2
+#largest_size_of_SFS_bin_used_for_estimation: 46 # default is nseq/2 for folded SFS
+pct_training: 0.67 # percentage of sites for training
+nrand: 11	22	33	44 # number of random break points for each try (separated by white space)
+project_dir: ALL_n60_final_g3 # name to give project directory
+stairway_plot_dir: stairway_plot_es # directory to the stairway plot files
+ninput: 200 # number of input files to be created for each estimation
+#output setting
+mu: 5.85e-9 # assumed mutation rate per site per generation
+year_per_generation: 3.5 # assumed generation time (in years)
+#plot setting
+plot_title: ALL_n60_final-g3 # title of the plot
+xrange: 0.1,1000 # Time (1k year) range; format: xmin,xmax; "0,0" for default
+yrange: 0,0 # Ne (1k individual) range; format: xmin,xmax; "0,0" for default
+xspacing: 2 # X axis spacing
+yspacing: 2 # Y axis spacing
+fontsize: 12 # Font size
